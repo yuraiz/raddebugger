@@ -1,23 +1,23 @@
 ////////////////////////////////
 //~ rjf: @os_hooks Helpers
 
-internal id
+internal NSString*
 NSString_fromUTF8(String8 string)
 {
   Temp scratch = scratch_begin(0, 0);
   String8 string_copy = push_str8_copy(scratch.arena, string);
-  id result = msg1(id, cls("NSString"), "stringWithUTF8String:", const char*, (const char*)string_copy.str);
+  NSString* result = [NSString stringWithUTF8String:(const char*)string_copy.str];
   scratch_end(scratch);
   return result;
 }
 
 internal void
-os_gfx_max_move_window_button(id window, NSWindowButton kind, F32 title_height)
+os_gfx_max_move_window_button(NSWindow* window, NSWindowButton kind, F32 title_height)
 {
-  id close_button = msg1(id, window, "standardWindowButton:", NSWindowButton, kind);
+  NSButton* button = [window standardWindowButton:kind];
 
-  CGRect frame = msg(CGRect, close_button, "frame");
-  CGPoint new_origin = frame.origin;
+  NSRect frame = button.frame;
+  NSPoint new_origin = frame.origin;
   
   F32 size = frame.size.width;
 
@@ -28,7 +28,7 @@ os_gfx_max_move_window_button(id window, NSWindowButton kind, F32 title_height)
   new_origin.x = base_offset_x + offset;
   new_origin.y = base_offset_y - offset;
   
-  msg1(void, close_button, "setFrameOrigin:", CGPoint, new_origin);
+  [button setFrameOrigin:new_origin];
 }
 
 internal void
@@ -66,25 +66,22 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
 {
   B32 propagate = 1;
 
-  id app = msg(id, cls("NSApplication"), "sharedApplication");
   NSInteger matchAll = -1;
-  id date = msg(id, cls("NSDate"), wait ? "distantFuture" : "distantPast");
-  id event = msg4(
-    id, app, "nextEventMatchingMask:untilDate:inMode:dequeue:", 
-    NSInteger, matchAll,
-    id, date,
-    id, NSDefaultRunLoopMode,
-    BOOL, YES
-  );
-  msg(void, date, "release");
+  NSDate* date = wait ? [NSDate distantFuture] : [NSDate distantPast];
+  NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                      untilDate:date
+                                         inMode:NSDefaultRunLoopMode
+                                        dequeue:YES];
+
+  [date release];
 
   if(event == 0)
   {
     return 0;
   }
 
-  NSInteger type = msg(NSInteger, event, "type");
-  id window = msg(id, event, "window");
+  NSEventType type = [event type];
+  NSWindow* window = [event window];
 
   OS_MAC_Window* os_window = 0;
   if(window != 0)
@@ -103,7 +100,7 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
     case NSEventTypeRightMouseUp:
     case NSEventTypeOtherMouseUp:
       {
-        U32 button_number = msg(U32, event, "buttonNumber");
+        U32 button_number = [event buttonNumber];
         B32 is_down = type == NSEventTypeLeftMouseDown ||
                       type == NSEventTypeLeftMouseDown ||
                       type == NSEventTypeLeftMouseDown;
@@ -114,6 +111,11 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
           case 0: {key = OS_Key_LeftMouseButton;}break;
           case 1: {key = OS_Key_RightMouseButton;}break;
           case 2: {key = OS_Key_MiddleMouseButton;}break;
+        }
+
+        if(os_window == 0)
+        {
+          break;
         }
 
         OS_Event *event = os_mac_gfx_event_list_push_key(arena, evts, os_window, key, is_down);
@@ -154,19 +156,19 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
       {
         propagate = 0;
 
-        unsigned short ns_key_code = msg(unsigned short, event, "keyCode");
+        unsigned short ns_key_code = [event keyCode];
         OS_Key key = os_mac_gfx_keycode_table[ns_key_code];
         B32 is_down = type == NSEventTypeKeyDown;
         
         os_mac_gfx_event_list_push_key(arena, evts, os_window, key, is_down);
 
-        NSEventModifierFlags flags = msg(NSEventModifierFlags, event, "modifierFlags");
+        NSEventModifierFlags flags = [event modifierFlags];
         B32 skip_char = flags & (NSEventModifierFlagControl | NSEventModifierFlagCommand);
 
         if(is_down && !skip_char)
         {
-          id ns_characters = msg(id, event, "characters");
-          char* c_characters = msg(char *, ns_characters, "UTF8String");
+          NSString* ns_characters = [event characters];
+          char* c_characters = [ns_characters UTF8String];
           U32 character = c_characters[0];
           if(character >= 32 && character < 127)
           {
@@ -175,20 +177,20 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
             event->modifiers = os_mac_gfx_state->modifiers;
             event->character = character;
           }
-          msg(void, ns_characters, "release");
+          [ns_characters release];
         }
       }
       break;
 
     case NSEventTypeFlagsChanged:
     {
-      unsigned short ns_key_code = msg(unsigned short, event, "keyCode");
+      unsigned short ns_key_code = [event keyCode];
       OS_Key key = os_mac_gfx_keycode_table[ns_key_code];
       B32 is_down = !os_key_is_down(key);
 
       os_mac_gfx_event_list_push_key(arena, evts, os_window, key, is_down);
 
-      NSEventModifierFlags flags = msg(NSEventModifierFlags, event, "modifierFlags");
+      NSEventModifierFlags flags = [event modifierFlags];
 
       OS_Modifiers modifiers = 0;
 
@@ -211,7 +213,7 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
 
     case NSEventTypeScrollWheel:
     {
-      F64 delta_y = msg(F64, event, "scrollingDeltaY");
+      F64 delta_y = [event scrollingDeltaY];
 
       OS_Event *e = os_event_list_push_new(arena, evts, OS_EventKind_Scroll);
       e->window.u64[0] = (U64)os_window;
@@ -223,8 +225,9 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
     case NSEventTypeLeftMouseDragged:
     {
       if(os_window != 0 && os_window->dragging_window)
+      if(os_window != 0 && os_window->dragging_window)
       {
-        msg1(void, window, "performWindowDragWithEvent:", id, event);
+        [window performWindowDragWithEvent:event];
       }
     }
     break;
@@ -232,7 +235,7 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
 
   if(propagate)
   {
-    msg1(void, app, "sendEvent:", id, event);
+    [NSApp sendEvent:event];
   }
 
   return 1;
@@ -255,26 +258,29 @@ os_mac_gfx_dequeue_events(Arena * arena)
 internal void
 os_mac_gfx_send_dummy_event(void)
 {
-  CGPoint location = {0, 0};
-  // NOTE(yuraiz): That's just a dummy app-defined NSEvent
-  SEL init_event = sel_getUid("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:");
-  id dummy = ((id (*)(id, SEL, NSInteger, CGPoint, NSUInteger, double, NSInteger, id, short, NSInteger, NSInteger))objc_msgSend)(
-    cls("NSEvent"), init_event, NSEventTypeApplicationDefined, location, 0, 0, 0, 0, 0, 0, 0
-  );
-  id app = msg(id, cls("NSApplication"), "sharedApplication");
-  msg2(id, app, "postEvent:atStart:", id, dummy, BOOL, YES);
+  NSPoint location = {0, 0};
+  NSEvent* dummy = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                    location:location
+                                modifierFlags:0
+                                   timestamp:0
+                                windowNumber:0
+                                     context:0
+                                     subtype:0
+                                       data1:0
+                                       data2:0];
+  [NSApp postEvent:dummy atStart:YES];
 }
 
 internal void
 os_mac_gfx_did_resize_handler(id v, SEL s, id notification)
 {
-  id window = msg(id, notification, "object");
+  id window = [notification object];
   OS_MAC_Window* os_window = (OS_MAC_Window *)objc_getAssociatedObject(window, "rad_window");
   os_mac_gfx_set_window_buttons_position(os_window);
 
   rd_frame();
 
-  msg1(void, window, "setViewsNeedDisplay:", BOOL, YES);
+  [window setViewsNeedDisplay:YES];
 }
 
 internal BOOL
@@ -284,8 +290,7 @@ os_mac_gfx_should_close_handler(id v, SEL s, id window)
   DLLRemove(os_mac_gfx_state->first_window, os_mac_gfx_state->last_window, os_window);
   SLLStackPush(os_mac_gfx_state->free_window, os_window);
 
-  id app = msg(id, cls("NSApplication"), "sharedApplication");
-  NSUInteger window_count = msg(NSUInteger, msg(id, app, "windows"), "count");
+  NSUInteger window_count = [[NSApp windows] count];
 
   if(window_count < 2)
   {
@@ -300,43 +305,35 @@ os_mac_gfx_should_close_handler(id v, SEL s, id window)
   return YES;
 }
 
-internal NSUInteger
+internal NSDragOperation
 os_mac_gfx_dragging_entered_handler(id v, SEL s, id sender)
 {
   // NOTE(yuraiz): The window accepts only file dragging. So just permit the copy
   // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/DragandDrop/Tasks/acceptingdrags.html
   // NSDragOperationCopy
-  return 1;
+  return NSDragOperationCopy;
 }
 
 internal BOOL
 os_mac_gfx_perform_drag_handler(id v, SEL s, id sender)
 {
-  id pboard = msg(id, sender, "draggingPasteboard");
-  id window = msg(id, sender, "draggingDestinationWindow");
+  NSPasteboard* pboard = [sender draggingPasteboard];
+  NSWindow* window = [sender draggingDestinationWindow];
 
   OS_MAC_Window* os_window = (OS_MAC_Window *)objc_getAssociatedObject(window, "rad_window");
 
-  id types = msg(id, pboard, "types");
+  NSArray* types = pboard.types;
 
-  if (msg1(BOOL, types, "containsObject:", id, NSPasteboardTypeFileURL))
+  if ([types containsObject:NSPasteboardTypeFileURL])
   {
-    id classes = msg1(id, cls("NSArray"), "arrayWithObject:", id, cls("NSURL"));
-    
-    id options = msg2(
-      id, cls("NSDictionary"), 
-      "dictionaryWithObject:forKey:", 
-      id, msg1(id, cls("NSNumber"), "numberWithBool:", BOOL, YES),
-      id, NSPasteboardURLReadingFileURLsOnlyKey
-    );
-    
-    id fileURLs = msg2(id, pboard, "readObjectsForClasses:options:", 
-                      id, classes, id, options);
-                      
-    NSUInteger count = msg(NSUInteger, fileURLs, "count");
-
+    NSArray* classes = @[NSURL.class];
+    NSDictionary* options = @{NSPasteboardURLReadingFileURLsOnlyKey:@YES};
+    NSArray* fileURLs = [pboard readObjectsForClasses:classes
+                                              options:options];
+  
     Arena *event_arena = os_mac_gfx_state->event_arena;
-
+                                              
+    NSUInteger count = fileURLs.count;
     if(count > 0)
     {
       OS_Event* event = os_event_list_push_new(
@@ -349,9 +346,8 @@ os_mac_gfx_perform_drag_handler(id v, SEL s, id sender)
       event->pos = os_mouse_from_window(event->window);
       for EachIndex(i, count)
       {
-        id url = msg1(id, fileURLs, "objectAtIndex:", NSUInteger, i);
-        id path = msg(id, url, "path");
-        char* cstring = msg(char *, path, "UTF8String");
+        NSURL* url = fileURLs[i];
+        char* cstring = url.path.UTF8String;
 
         struct stat path_stat;
         stat(cstring, &path_stat);
@@ -374,9 +370,6 @@ os_mac_gfx_perform_drag_handler(id v, SEL s, id sender)
 ////////////////////////////////
 //~ rjf: @os_hooks Main Initialization API (Implemented Per-OS)
 
-#include <CoreFoundation/CFCGTypes.h>
-#include <objc/NSObjCRuntime.h>
-#include <stdio.h>
 internal void
 os_gfx_init(void)
 {  
@@ -398,51 +391,45 @@ os_gfx_init(void)
   os_mac_gfx_state->gfx_info.default_refresh_rate = 60.f;
 
   //- yuraiz: setup NSApplication
-  id app = msg(id, cls("NSApplication"), "sharedApplication");
-  msg1(void, app, "setActivationPolicy:", NSInteger, 0);
+  [NSApplication sharedApplication];
+  [NSApp setActivationPolicy: NSApplicationActivationPolicyRegular];
 
   //- yuraiz: add minimal menu
   // https://hero.handmade.network/forums/code-discussion/t/1409-main_game_loop_on_os_x
 
-  id menubar = msg(id, msg(id, cls("NSMenu"), "new"), "autorelease");
-  id app_menu_item = msg(id, msg(id, cls("NSMenuItem"), "new"), "autorelease");
-  msg1(void, menubar, "addItem:", id, app_menu_item);
-  msg1(void, app, "setMainMenu:", id, menubar);
+  NSMenu* menubar = [[NSMenu new] autorelease];
+  NSMenuItem* app_menu_item = [[NSMenuItem new] autorelease];
+  [menubar addItem:app_menu_item];
+  [NSApp setMainMenu:menubar];
 
   // Then we add the quit item to the menu. Fortunately the action is simple since terminate: is
   // already implemented in NSApplication and the NSApplication is always in the responder chain.
-  id app_menu = msg(id, msg(id, cls("NSMenu"), "new"), "autorelease");
-  id appName = msg(id, msg(id, cls("NSProcessInfo"), "processInfo"), "processName");
-  id quitString = NSString_fromUTF8(str8_lit("Quit "));
-  id quitTitle = msg1(id, quitString, "stringByAppendingString:", id, appName);
+  NSMenu* app_menu = [[NSMenu new] autorelease];
+  NSString* app_name = [[NSProcessInfo processInfo] processName];
+  NSString* quit_title = [@"Quit " stringByAppendingString:app_name];
 
-  id quitMenuItem = msg(id, 
-    msg3(id, 
-      msg(id, cls("NSMenuItem"), "alloc"),
-      "initWithTitle:action:keyEquivalent:",
-      id, quitTitle, SEL, sel_getUid("terminate:"), id, NSString_fromUTF8(str8_lit("q"))
-    ),
-    "autorelease"
-  );
+  NSMenuItem* quit_menu_item = [[[NSMenuItem alloc] initWithTitle:quit_title
+                                                           action:@selector(terminate:)
+                                                    keyEquivalent:@"q"] autorelease];
+ 
+  [app_menu addItem:quit_menu_item];
+  [app_menu_item setSubmenu:app_menu];
 
-  msg1(void, app_menu, "addItem:", id, quitMenuItem);
-  msg1(void, app_menu_item, "setSubmenu:", id, app_menu);
-
-  msg1(void, app, "activateIgnoringOtherApps:", BOOL, YES);
+  [NSApp activateIgnoringOtherApps:YES];
 
   //- yuraiz: create window delegate class
-  Class win_delegate = objc_allocateClassPair((Class)cls("NSObject"), "RADWinDelegate", 0);
+  Class win_delegate = objc_allocateClassPair(NSObject.class, "RADWinDelegate", 0);
 
-  class_addMethod(win_delegate, sel_getUid("windowDidResize:"),
+  class_addMethod(win_delegate, @selector(windowDidResize:),
     (IMP)os_mac_gfx_did_resize_handler, "v@:@");
 
-  class_addMethod(win_delegate, sel_getUid("windowShouldClose:"),
+  class_addMethod(win_delegate, @selector(windowShouldClose:),
     (IMP)os_mac_gfx_should_close_handler, "v@:@");
 
-  class_addMethod(win_delegate, sel_getUid("draggingEntered:"),
+  class_addMethod(win_delegate, @selector(draggingEntered:),
     (IMP)os_mac_gfx_dragging_entered_handler, "v@:@");
   
-  class_addMethod(win_delegate, sel_getUid("performDragOperation:"),
+  class_addMethod(win_delegate, @selector(performDragOperation:),
     (IMP)os_mac_gfx_perform_drag_handler, "v@:@");
 
   objc_registerClassPair(win_delegate);
@@ -463,22 +450,24 @@ os_get_gfx_info(void)
 internal void
 os_set_clipboard_text(String8 string)
 {
-  id ns_string =  NSString_fromUTF8(string);
-  id pboard = msg(id, cls("NSPasteboard"), "generalPasteboard");
-  msg(void, pboard, "clearContents");
-  msg2(void, pboard, "setString:forType:", id, ns_string, id, NSPasteboardTypeString);
+  NSString* ns_string =  NSString_fromUTF8(string);
+  NSPasteboard* pboard = [NSPasteboard generalPasteboard];
+  
+  [pboard clearContents];
+  [pboard setString:ns_string
+            forType:NSPasteboardTypeString];
 }
 
 internal String8
 os_get_clipboard_text(Arena *arena)
 {
-  id pboard = msg(id, cls("NSPasteboard"), "generalPasteboard");
-  id ns_string = msg1(id, pboard, "stringForType:", id, NSPasteboardTypeString);
+  NSPasteboard* pboard = [NSPasteboard generalPasteboard];
 
-  char* cstring = msg(char *, ns_string, "UTF8String");
+  NSString* ns_string = [pboard stringForType:NSPasteboardTypeString];
+  char* cstring = ns_string.UTF8String;
   String8 result = push_str8_copy(arena, str8_cstring(cstring));
-  msg(void, ns_string, "release");
 
+  [ns_string release];
   return result;
 }
 
@@ -490,20 +479,17 @@ os_window_open(Rng2F32 rect, OS_WindowFlags flags, String8 title)
 {
   Vec2F32 resolution = dim_2f32(rect);
 
-  CGRect contentRect = {{0, 0}, {resolution.x, resolution.y}};
-  NSInteger styleMask = NSWindowStyleMaskResizable |
+  NSRect contentRect = {{0, 0}, {resolution.x, resolution.y}};
+  NSWindowStyleMask styleMask = NSWindowStyleMaskResizable |
                         NSWindowStyleMaskClosable |
                         NSWindowStyleMaskMiniaturizable |
                         NSWindowStyleMaskFullSizeContentView |
                         NSWindowStyleMaskTitled;
-  NSInteger backingStore = 2;
-  id window = msg4(id, msg(id, cls("NSWindow"), "alloc"),
-                "initWithContentRect:styleMask:backing:defer:",
-                CGRect, contentRect,
-                NSUInteger, styleMask,
-                NSUInteger, backingStore,
-                BOOL, NO
-              );
+
+  NSWindow* window = [[NSWindow alloc] initWithContentRect:contentRect
+                                                 styleMask:styleMask
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
 
   if(window == 0)
   {
@@ -511,18 +497,16 @@ os_window_open(Rng2F32 rect, OS_WindowFlags flags, String8 title)
     os_abort(1);
   }
 
-  msg1(void, window, "setTitle:", id,  NSString_fromUTF8(title));
-  msg1(void, window, "makeKeyAndOrderFront:", id, NULL);
-  msg1(void, window, "setTitlebarAppearsTransparent:", BOOL, YES);
-  msg1(void, window, "setTitleVisibility:", NSUInteger, 1);
-  msg1(void, window, "setMovable:", BOOL, NO);
-  msg(void, window, "center");
+  [window setTitle:NSString_fromUTF8(title)];
+  [window makeKeyAndOrderFront:NULL];
+  [window setTitlebarAppearsTransparent:YES];
+  [window setTitleVisibility:NSWindowTitleHidden];
+  [window setMovable:NO];
+  [window center];
 
-  id pb_type_array = msg1(id, cls("NSArray"), "arrayWithObject:", id, NSPasteboardTypeFileURL);
-  msg1(void, window, "registerForDraggedTypes:", id, pb_type_array);
+  [window registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
 
-  id win_delegate = msg(id, msg(id, cls("RADWinDelegate"), "alloc"), "init");
-  msg1(void, window, "setDelegate:", id, win_delegate);
+  [window setDelegate:[[objc_getClass("RADWinDelegate") alloc] init]];
 
   OS_MAC_Window* os_window = os_mac_gfx_state->free_window;
   if(os_window)
@@ -552,7 +536,7 @@ os_window_close(OS_Handle handle)
 {
   if(os_handle_match(handle, os_handle_zero())) {return;}
   OS_MAC_Window *w = (OS_MAC_Window *)handle.u64[0];
-  msg1(void, w->win, "performClose:", id, NULL);
+  [w->win performClose:0];
 }
 
 internal void
@@ -560,7 +544,7 @@ os_window_set_title(OS_Handle handle, String8 title)
 {
   if(os_handle_match(handle, os_handle_zero())) {return;}
   OS_MAC_Window *w = (OS_MAC_Window *)handle.u64[0];
-  msg1(void, w->win, "setTitle:", id,  NSString_fromUTF8(title));
+  [w->win setTitle:NSString_fromUTF8(title)];
 }
 
 internal void
@@ -580,7 +564,7 @@ os_window_is_focused(OS_Handle handle)
 {
   if(os_handle_match(handle, os_handle_zero())) {return 0;}
   OS_MAC_Window *w = (OS_MAC_Window *)handle.u64[0];
-  B32 result = msg(BOOL, w->win, "isKeyWindow");
+  B32 result = w->win.isKeyWindow;
   return result;
 }
 
@@ -589,8 +573,7 @@ os_window_is_fullscreen(OS_Handle handle)
 {
   if(os_handle_match(handle, os_handle_zero())) {return 0;}
   OS_MAC_Window *w = (OS_MAC_Window *)handle.u64[0];
-  NSInteger styleMask = msg(NSInteger, w->win, "styleMask");
-  return styleMask & NSWindowStyleMaskFullScreen;
+  return w->win.styleMask & NSWindowStyleMaskFullScreen;
 }
 
 internal void
@@ -602,7 +585,7 @@ os_window_set_fullscreen(OS_Handle handle, B32 fullscreen)
 
   if(fullscreen != already_fullscreen)
   {
-    msg1(void, w->win, "toggleFullScreen:", id, NULL);
+    [w->win toggleFullScreen:0];
   }
 }
 
@@ -623,7 +606,7 @@ os_window_is_minimized(OS_Handle window)
 {
   if(os_handle_match(window, os_handle_zero())) {return 0;}
   OS_MAC_Window *w = (OS_MAC_Window *)window.u64[0];
-  BOOL result = msg(BOOL, w->win, "isMiniaturized");
+  BOOL result = [w->win isMiniaturized];
   return result;
 }
 
@@ -632,7 +615,14 @@ os_window_set_minimized(OS_Handle window, B32 minimized)
 {
   if(os_handle_match(window, os_handle_zero())) {return;}
   OS_MAC_Window *w = (OS_MAC_Window *)window.u64[0];
-  msg1(void, w->win, minimized ? "miniaturize:" : "deminiaturize:", id, NULL);
+  if(minimized)
+  {
+    [w->win miniaturize:0];
+  }
+  else
+  {
+    [w->win deminiaturize:0];
+  }
 }
 
 internal void
@@ -640,7 +630,7 @@ os_window_bring_to_front(OS_Handle window)
 {
   if(os_handle_match(window, os_handle_zero())) {return;}
   OS_MAC_Window *w = (OS_MAC_Window *)window.u64[0];
-  msg1(void, w->win, "makeKeyAndOrderFront:", id, NULL);
+  [w->win makeKeyAndOrderFront:0];
 }
 
 internal void
@@ -699,10 +689,9 @@ os_rect_from_window(OS_Handle window)
   if(os_handle_match(window, os_handle_zero())) {return r2f32(v2f32(0, 0), v2f32(0, 0));}
   OS_MAC_Window *w = (OS_MAC_Window *)window.u64[0];
   
-  id content_view = msg(id, w->win, "contentView");
-  CGRect rect = msg(CGRect, content_view, "frame");
+  NSSize size = w->win.contentView.frame.size;
 
-  Rng2F32 result = r2f32(v2f32(0, 0), v2f32(rect.size.width, rect.size.height));
+  Rng2F32 result = r2f32(v2f32(0, 0), v2f32(size.width, size.height));
   return result;
 }
 
@@ -712,9 +701,8 @@ os_client_rect_from_window(OS_Handle window)
   if(os_handle_match(window, os_handle_zero())) {return r2f32(v2f32(0, 0), v2f32(0, 0));}
   OS_MAC_Window *w = (OS_MAC_Window *)window.u64[0];
   
-  id content_view = msg(id, w->win, "contentView");
-  CGRect rect = msg(CGRect, content_view, "frame");
-  CGRect scaled_rect = msg1(CGRect, content_view, "convertRectToBacking:", CGRect, rect);
+  NSView* content_view = w->win.contentView;
+  NSRect scaled_rect = [content_view convertRectToBacking:content_view.frame];
 
   Rng2F32 result = r2f32(v2f32(0, 0), v2f32(scaled_rect.size.width, scaled_rect.size.height));
   return result;
@@ -832,13 +820,12 @@ os_mouse_from_window(OS_Handle window)
   if(os_handle_match(window, os_handle_zero())) {return v2f32(0, 0);}
   OS_MAC_Window *w = (OS_MAC_Window *)window.u64[0];
 
-  CGPoint mouse_loc = msg(CGPoint, w->win, "mouseLocationOutsideOfEventStream");
+  NSPoint mouse_loc = [w->win mouseLocationOutsideOfEventStream];
 
-  id content_view = msg(id, w->win, "contentView");
-  CGRect rect = msg(CGRect, content_view, "frame");
-  mouse_loc.y = rect.size.height - mouse_loc.y;
+  NSSize size = w->win.contentView.frame.size;
+  mouse_loc.y = size.height - mouse_loc.y;
 
-  F64 scale = msg(F64, w->win, "backingScaleFactor");
+  F64 scale = w->win.backingScaleFactor;
 
   return v2f32(mouse_loc.x * scale, mouse_loc.y * scale);
 }
@@ -852,50 +839,46 @@ os_set_cursor(OS_Cursor cursor)
   NSInteger NSCursorBottomRight = 12;
   NSInteger NSCursorTopRight = 9;
 
-  id ns_cursor = os_mac_gfx_state->cursors[cursor];
+  NSCursor* ns_cursor = os_mac_gfx_state->cursors[cursor];
   if(ns_cursor == 0)
   {
     switch(cursor)
     {
       case OS_Cursor_Pointer:
-        ns_cursor = msg(id, cls("NSCursor"), "arrowCursor");
+        ns_cursor = [NSCursor arrowCursor];
         break;
       case OS_Cursor_IBar:
-        ns_cursor = msg(id, cls("NSCursor"), "IBeamCursor");
+        ns_cursor = [NSCursor IBeamCursor];
         break;
       case OS_Cursor_LeftRight:
-        ns_cursor = msg(id, cls("NSCursor"), "resizeLeftRightCursor");
+        ns_cursor = [NSCursor resizeLeftRightCursor];
         break;
       case OS_Cursor_UpDown:
-        ns_cursor = msg(id, cls("NSCursor"), "resizeUpDownCursor");
+        ns_cursor = [NSCursor resizeUpDownCursor];
         break;
       case OS_Cursor_DownRight:
-        ns_cursor = msg2(id, cls("NSCursor"), "frameResizeCursorFromPosition:inDirections:",
-          NSInteger, NSCursorBottomRight,
-          NSInteger, 2
-        );
+        ns_cursor = [NSCursor frameResizeCursorFromPosition:NSCursorBottomRight
+                                               inDirections:NSCursorFrameResizeDirectionsAll];
         break;
       case OS_Cursor_UpRight:
-        ns_cursor = msg2(id, cls("NSCursor"), "frameResizeCursorFromPosition:inDirections:",
-          NSInteger, NSCursorTopRight,
-          NSInteger, 2
-        );
+        ns_cursor = [NSCursor frameResizeCursorFromPosition:NSCursorTopRight
+                                               inDirections:NSCursorFrameResizeDirectionsAll];
         break;
       case OS_Cursor_UpDownLeftRight:
-        ns_cursor = msg(id, cls("NSCursor"), "openHandCursor");
+        ns_cursor = [NSCursor openHandCursor];
         break;
       case OS_Cursor_HandPoint:
-        ns_cursor = msg(id, cls("NSCursor"), "openHandCursor");
+        ns_cursor = [NSCursor openHandCursor];
         break;
       case OS_Cursor_Disabled:
-        ns_cursor = msg(id, cls("NSCursor"), "operationNotAllowedCursor");
+        ns_cursor = [NSCursor operationNotAllowedCursor];
         break;
       case OS_Cursor_COUNT: break;
     }
     os_mac_gfx_state->cursors[cursor] = ns_cursor;
   }
 
-  msg(void, ns_cursor, "set");
+  [ns_cursor set];
 }
 
 ////////////////////////////////
@@ -904,50 +887,48 @@ os_set_cursor(OS_Cursor cursor)
 internal void
 os_graphical_message(B32 error, String8 title, String8 message)
 {
-  // NOTE(yurai): The funciton can be run without app initialization,
+  // NOTE(yuraiz): The funciton can be run without app initialization,
   // so ensure "sharedApplication" is created and configured.
-  id app = msg(id, cls("NSApplication"), "sharedApplication");
-  msg1(void, app, "setActivationPolicy:", NSInteger, 0);
+  [NSApplication sharedApplication];
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-  id alert = msg(id, msg(id, cls("NSAlert"), "alloc"), "init");
+  NSAlert* alert = [[NSAlert alloc] init];
 
-  id icon_name = error ? NSImageNameCaution : NSImageNameInfo;
-  id icon = msg1(id, cls("NSImage"), "imageNamed:", id, icon_name);
+  NSString* icon_name = error ? NSImageNameCaution : NSImageNameInfo;
+  NSImage* icon = [NSImage imageNamed:icon_name];
+
+  [alert setMessageText:NSString_fromUTF8(title)];
+  [alert setInformativeText:NSString_fromUTF8(message)];
+  [alert setIcon:icon];
   
-  msg1(void, alert, "setMessageText:", id, NSString_fromUTF8(title));
-  msg1(void, alert, "setInformativeText:", id, NSString_fromUTF8(message));
-  msg1(void, alert, "setIcon:", id, icon);
-
-  msg(void, alert, "layout");
-  id alert_window = msg(id, alert, "window");
-  msg(void, alert_window, "center");
-  msg1(void, alert_window, "makeKeyAndOrderFront:", id, NULL);
-  msg(void, alert, "runModal");
+  [alert layout];
+  [[alert window] center];
+  [[alert window] makeKeyAndOrderFront:0];
+  [alert runModal];
 }
 
 internal String8
 os_graphical_pick_file(Arena *arena, String8 initial_path)
 {
-  id dir_path = NSString_fromUTF8(initial_path);
-  id dir_url = msg1(id, cls("NSURL"), "fileURLWithPath:", id, dir_path);
+  NSURL* dir_url = [NSURL fileURLWithPath:NSString_fromUTF8(initial_path)];
 
-  id panel = msg(id, cls("NSOpenPanel"), "openPanel");
+  NSOpenPanel* panel = [NSOpenPanel openPanel];
 
-  msg1(void, panel, "setDirectoryURL:", id, dir_url);
-  msg1(void, panel, "setCanChooseFiles:", BOOL, YES);
-  msg1(void, panel, "setCanChooseDirectories:", BOOL, NO);
-  msg1(void, panel, "setAllowsMultipleSelection:", BOOL, NO);
+  [panel setDirectoryURL:dir_url];
+  [panel setCanChooseFiles:YES];
+  [panel setCanChooseDirectories:NO];
+  [panel setAllowsMultipleSelection:NO];
 
-  NSInteger response = msg(NSInteger, panel, "runModal");
+  NSInteger response = [panel runModal];
   if(response == 1)
   {
-    id urls = msg(id, panel, "URLs");
-    id url = msg(id, urls, "firstObject");
-    id path = msg(id, url, "path");
-    char* cstring = msg(char *, path, "UTF8String");
+    NSArray* urls = panel.URLs;
+    NSURL* url = urls[0];
+    NSString* path = url.path;
+    char* cstring = path.UTF8String;
     String8 result = push_str8_copy(arena, str8_cstring(cstring));
-    msg(void, urls, "release");
-    msg(void, path, "release");
+    [urls release];
+    [path release];
     return result;
   }
 
