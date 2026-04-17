@@ -201,12 +201,166 @@ REGS_AliasTableX64:
 }
 
 ////////////////////////////////
+//~ rjf: ARM64 Tables
+
+@table(name size usage)
+REGS_RegTableARM64:
+{
+  // Normal
+  {x0                             64   Normal}
+  {x1                             64   Normal}
+  {x2                             64   Normal}
+  {x3                             64   Normal}
+  {x4                             64   Normal}
+  {x5                             64   Normal}
+  {x6                             64   Normal}
+  {x7                             64   Normal}
+  {x8                             64   Normal}
+  {x9                             64   Normal}
+  {x10                            64   Normal}
+  {x11                            64   Normal}
+  {x12                            64   Normal}
+  {x13                            64   Normal}
+  {x14                            64   Normal}
+  {x15                            64   Normal}
+  {x16                            64   Normal}
+  {x17                            64   Normal}
+  {x18                            64   Normal}
+  {x19                            64   Normal}
+  {x20                            64   Normal}
+  {x21                            64   Normal}
+  {x22                            64   Normal}
+  {x23                            64   Normal}
+  {x24                            64   Normal}
+  {x25                            64   Normal}
+  {x26                            64   Normal}
+  {x27                            64   Normal}
+  {x28                            64   Normal}
+  {x29                            64   Normal} // Frame pointer
+  {x30                            64   Normal} // Link register
+  {x31                            64   Normal} // Stack pointer
+  {pc                             64   Normal} // Program counter
+  {cpsr                           32   Normal} // Current program status register
+  // Vector registers
+  {v0                             128  Vector}
+  {v1                             128  Vector}
+  {v2                             128  Vector}
+  {v3                             128  Vector}
+  {v4                             128  Vector}
+  {v5                             128  Vector}
+  {v6                             128  Vector}
+  {v7                             128  Vector}
+  {v8                             128  Vector}
+  {v9                             128  Vector}
+  {v10                            128  Vector}
+  {v11                            128  Vector}
+  {v12                            128  Vector}
+  {v13                            128  Vector}
+  {v14                            128  Vector}
+  {v15                            128  Vector}
+  {v16                            128  Vector}
+  {v17                            128  Vector}
+  {v18                            128  Vector}
+  {v19                            128  Vector}
+  {v20                            128  Vector}
+  {v21                            128  Vector}
+  {v22                            128  Vector}
+  {v23                            128  Vector}
+  {v24                            128  Vector}
+  {v25                            128  Vector}
+  {v26                            128  Vector}
+  {v27                            128  Vector}
+  {v28                            128  Vector}
+  {v29                            128  Vector}
+  {v30                            128  Vector}
+  {v31                            128  Vector}
+  {fpsr                            32  Normal}
+  {fpcr                            32  Normal}
+  // Debug Registers
+  {bvr0                             32   Normal}
+  {bvr1                             32   Normal}
+  {bvr2                             32   Normal}
+  {bvr3                             32   Normal}
+  {bvr4                             32   Normal}
+  {bvr5                             32   Normal}
+  {bvr6                             32   Normal}
+  {bvr7                             32   Normal}
+  {bvr8                             32   Normal}
+  {bvr9                             32   Normal}
+  {bvr10                            32   Normal}
+  {bvr11                            32   Normal}
+  {bvr12                            32   Normal}
+  {bvr13                            32   Normal}
+  {bvr14                            32   Normal}
+  {bvr15                            32   Normal}
+  {bcr0                             32   Normal}
+  {bcr1                             32   Normal}
+  {bcr2                             32   Normal}
+  {bcr3                             32   Normal}
+  {bcr4                             32   Normal}
+  {bcr5                             32   Normal}
+  {bcr6                             32   Normal}
+  {bcr7                             32   Normal}
+  {bcr8                             32   Normal}
+  {bcr9                             32   Normal}
+  {bcr10                            32   Normal}
+  {bcr11                            32   Normal}
+  {bcr12                            32   Normal}
+  {bcr13                            32   Normal}
+  {bcr14                            32   Normal}
+  {bcr15                            32   Normal}
+  {wvr0                             32   Normal}
+  {wvr1                             32   Normal}
+  {wvr2                             32   Normal}
+  {wvr3                             32   Normal}
+  {wvr4                             32   Normal}
+  {wvr5                             32   Normal}
+  {wvr6                             32   Normal}
+  {wvr7                             32   Normal}
+  {wvr8                             32   Normal}
+  {wvr9                             32   Normal}
+  {wvr10                            32   Normal}
+  {wvr11                            32   Normal}
+  {wvr12                            32   Normal}
+  {wvr13                            32   Normal}
+  {wvr14                            32   Normal}
+  {wvr15                            32   Normal}
+  {wcr0                             32   Normal}
+  {wcr1                             32   Normal}
+  {wcr2                             32   Normal}
+  {wcr3                             32   Normal}
+  {wcr4                             32   Normal}
+  {wcr5                             32   Normal}
+  {wcr6                             32   Normal}
+  {wcr7                             32   Normal}
+  {wcr8                             32   Normal}
+  {wcr9                             32   Normal}
+  {wcr10                            32   Normal}
+  {wcr11                            32   Normal}
+  {wcr12                            32   Normal}
+  {wcr13                            32   Normal}
+  {wcr14                            32   Normal}
+  {wcr15                            32   Normal}
+  {mdscr_el1                        64   Normal} // Bit 0 is SS (Hardware Single Step)
+}
+
+@table(name base off size usage)
+REGS_AliasTableARM64:
+{
+  {fp              x29    0      64     Normal}
+  {lr              x30    0      64     Normal}
+  {sp              x31    0      64     Normal}
+}
+
+
+////////////////////////////////
 //~ rjf: Architecture Tables
 
 @table(name, name_lower)
 REGS_ArchTable:
 {
   {X64 x64}
+  {ARM64 arm64}
 }
 
 ////////////////////////////////
@@ -266,6 +420,65 @@ regs_g_alias_code_x64_usage_kind_table:
 {
   `{0}`;
   @expand(REGS_AliasTableX64 a) `{REGS_RegCodeX64_$(a.base), $(a.off/8), $(a.size/8)}`,
+}
+
+////////////////////////////////
+//~ rjf: ARM64 Generators
+
+@enum REGS_RegCodeARM64:
+{
+  NULL,
+  @expand(REGS_RegTableARM64 a) `$(a.name)`,
+  COUNT,
+}
+
+@enum REGS_AliasCodeARM64:
+{
+  NULL,
+  @expand(REGS_AliasTableARM64 a) `$(a.name)`,
+  COUNT,
+}
+
+@struct REGS_RegBlockARM64:
+{
+  @expand(REGS_RegTableARM64 a) `REGS_Reg$(a.size) $(a.name)`,
+}
+
+@data(REGS_UsageKind) regs_g_reg_code_arm64_usage_kind_table:
+{
+  `REGS_UsageKind_Normal`;
+  @expand(REGS_RegTableARM64 a) `REGS_UsageKind_$(a.usage)`;
+}
+
+@data(REGS_UsageKind)
+regs_g_alias_code_arm64_usage_kind_table:
+{
+  `REGS_UsageKind_Normal`;
+  @expand(REGS_AliasTableARM64 a) `REGS_UsageKind_$(a.usage)`;
+}
+
+@data(String8) regs_g_reg_code_arm64_string_table:
+{
+  `str8_lit_comp("")`;
+  @expand(REGS_RegTableARM64 a) `str8_lit_comp("$(a.name)")`;
+}
+
+@data(String8) regs_g_alias_code_arm64_string_table:
+{
+  `str8_lit_comp("")`;
+  @expand(REGS_AliasTableARM64 a) `str8_lit_comp("$(a.name)")`;
+}
+
+@data(REGS_Rng) regs_g_reg_code_arm64_rng_table:
+{
+  `{0}`;
+  @expand(REGS_RegTableARM64 a) `{(U16)OffsetOf(REGS_RegBlockARM64, $(a.name)), $(a.size/8)}`,
+}
+
+@data(REGS_Slice) regs_g_alias_code_arm64_slice_table:
+{
+  `{0}`;
+  @expand(REGS_AliasTableARM64 a) `{REGS_RegCodeARM64_$(a.base), $(a.off/8), $(a.size/8)}`,
 }
 
 ////////////////////////////////
