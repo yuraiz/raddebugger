@@ -14,6 +14,8 @@
 # include "metagen/metagen_os/core/win32/metagen_os_core_win32.h"
 #elif OS_LINUX
 # include "metagen/metagen_os/core/linux/metagen_os_core_linux.h"
+#elif OS_MAC
+# include "metagen/metagen_os/core/mac/metagen_os_core_mac.h"
 #else
 # error OS core layer not implemented for this operating system.
 #endif
