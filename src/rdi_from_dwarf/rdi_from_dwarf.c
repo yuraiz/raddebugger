@@ -437,6 +437,20 @@ d2r_rdi_reg_code_from_dw_reg_x64(DW_RegX64 v)
   return result;
 }
 
+internal RDI_RegCodeX64
+d2r_rdi_reg_code_from_dw_reg_arm64(DW_RegX64 v)
+{
+  // TODO(yuraiz): Implement arm64 registers
+  RDI_RegCodeX64 result = RDI_RegCode_nil;
+  switch (v) {
+    default: {} break;
+#define X(reg_dw, val_dw, reg_rdi, off, size) case DW_RegX64_##reg_dw: { result = RDI_RegCodeX64_##reg_rdi; } break;
+    DW_Regs_X64_XList
+#undef X
+  }
+  return result;
+}
+
 internal RDI_RegCode
 d2r_rdi_reg_code_from_dw_reg(Arch arch, DW_Reg v)
 {
@@ -445,6 +459,7 @@ d2r_rdi_reg_code_from_dw_reg(Arch arch, DW_Reg v)
     default: NotImplemented; break;
     case Arch_Null: break;
     case Arch_x64:{ result = d2r_rdi_reg_code_from_dw_reg_x64(v); } break;
+    case Arch_arm64:{ result = d2r_rdi_reg_code_from_dw_reg_arm64(v); } break;
   }
   return result;
 }
@@ -1719,18 +1734,22 @@ d2r_convert_types(Arena         *arena,
             log_user_errorf("unexpected tag @ .debug_info+%llx", tag.info_off);
           }
         }
-        
-        DW_TagNode *parent = d2r_tag_iterator_parent_tag_node(it);
-        B32 is_method = parent->tag.kind == DW_TagKind_StructureType || parent->tag.kind == DW_TagKind_ClassType;
-        
-        // init proceudre type
-        RDIM_Type *type     = d2r_create_type_from_offset(arena, type_table, tag.info_off);
-        type->kind          = is_method ? RDI_TypeKind_Method : RDI_TypeKind_Function;
-        type->byte_size     = cu->address_size;
-        type->direct_type   = ret_type;
-        type->count         = param_list.count;
-        type->param_types   = rdim_array_from_type_list(arena, param_list);
-        
+
+        // TODO(yuraiz): Figure out why is it sometimes 0
+        if(it->stack->next != 0)
+        {
+          DW_TagNode *parent = d2r_tag_iterator_parent_tag_node(it);
+          B32 is_method = parent->tag.kind == DW_TagKind_StructureType || parent->tag.kind == DW_TagKind_ClassType;
+          
+          // init proceudre type
+          RDIM_Type *type     = d2r_create_type_from_offset(arena, type_table, tag.info_off);
+          type->kind          = is_method ? RDI_TypeKind_Method : RDI_TypeKind_Function;
+          type->byte_size     = cu->address_size;
+          type->direct_type   = ret_type;
+          type->count         = param_list.count;
+          type->param_types   = rdim_array_from_type_list(arena, param_list);
+        }
+          
         d2r_tag_iterator_skip_children(it);
       } break;
       case DW_TagKind_Typedef: {
@@ -1938,7 +1957,8 @@ d2r_convert_types(Arena         *arena,
         // TODO: @native_vector_support extract byte size from the base type tag
         // and convert to U256, U512, S256 and S512
         B32 is_vector = dw_flag_from_tag_attrib_kind(input, cu, tag, DW_AttribKind_GNU_Vector);
-        if (is_vector) { NotImplemented; }
+        // NOTE(yuraiz): There was a mark "NotImplemented"
+        if (is_vector) { break; }
         
         B32 error = 1;
         
@@ -2045,10 +2065,14 @@ d2r_convert_types(Arena         *arena,
         if (parent_tag.kind == DW_TagKind_StructureType || parent_tag.kind == DW_TagKind_ClassType) {
           RDIM_Type      *parent = d2r_type_from_offset(type_table, parent_tag.info_off);
           RDIM_Type      *type   = d2r_find_or_convert_type(arena, type_table, input, cu, cu_lang, arch, tag, DW_AttribKind_Type);
-          RDIM_UDTMember *member = rdim_udt_push_member(arena, &g_d2r_shared.udts, parent->udt);
-          member->kind           = RDI_MemberKind_Base;
-          member->type           = type;
-          member->off            = safe_cast_u32(dw_const_u32_from_tag_attrib_kind(input, cu, tag, DW_AttribKind_DataMemberLocation));
+          // TODO(yuraiz): Figure out why the udt sometimes 0
+          if(parent->udt != 0)
+          {
+            RDIM_UDTMember *member = rdim_udt_push_member(arena, &g_d2r_shared.udts, parent->udt);
+            member->kind           = RDI_MemberKind_Base;
+            member->type           = type;
+            member->off            = safe_cast_u32(dw_const_u32_from_tag_attrib_kind(input, cu, tag, DW_AttribKind_DataMemberLocation));
+          }
         } else {
           log_user_errorf("unexpected parent tag");
         }
@@ -2755,9 +2779,17 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
         
         g_d2r_shared.binary_sections = e2r_rdi_binary_sections_from_elf_section_table(arena, bin.shdrs);
       } break;
+      case ExecutableImageKind_Macho: {
+        // TODO(yuraiz): Figure that out
+        MACH_Bin mach_bin = mach_bin_read_from_file(scratch.arena, params->dbg_name);
+        arch       = Arch_arm64;
+        image_base = 0;
+        input      = dw_input_from_mach_bin(scratch.arena, mach_bin, params->dbg_data);
+        path_style = PathStyle_Relative;
+      } break;
       default: { InvalidPath; } break;
     }
-    
+        
     ////////////////////////////////
     
     ProfBegin("compute exe hash");
@@ -2896,7 +2928,7 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
         
         // push line buffer
 #define D2R_LineBufferMax 1024
-        struct LineBuffer { U64 file_index; U64 voffs[D2R_LineBufferMax]; U32 line_nums[D2R_LineBufferMax]; U32 col_nums[D2R_LineBufferMax]; } LineBuffer;
+        struct LineBuffer { U64 file_index; U64 voffs[D2R_LineBufferMax]; U32 line_nums[D2R_LineBufferMax]; U32 col_nums[D2R_LineBufferMax]; };
         struct LineBuffer *line_buffer      = push_array(temp.arena, struct LineBuffer, 1);
         U64                line_buffer_size = 0;
         
@@ -3004,7 +3036,13 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
     
     //////////////////////////////// 
     
-    RDIM_Type *builtin_types[RDI_TypeKind_Count] = {0};
+    RDIM_Scope *global_scope = rdim_scope_chunk_list_push(arena, &g_d2r_shared.scopes, D2R_SCOPE_CHUNK_CAP);
+    
+    //////////////////////////////// 
+    
+    // NOTE(yuraiz): Moved to the heap because that variable can blow up the stack.
+    RDIM_Type **builtin_types = push_array(scratch.arena, RDIM_Type *, RDI_TypeKind_Count);
+    // RDIM_Type *builtin_types[RDI_TypeKind_Count] = {0};
     for (RDI_TypeKind type_kind = RDI_TypeKind_FirstBuiltIn; type_kind <= RDI_TypeKind_LastBuiltIn; type_kind += 1) {
       RDIM_Type *type = rdim_type_chunk_list_push(arena, &g_d2r_shared.types, D2R_TYPE_CHUNK_CAP);
       type->kind      = type_kind;
