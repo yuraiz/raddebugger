@@ -2914,7 +2914,8 @@ d_unwind_from_thread(Arena *arena, D_EntityCtx *ctx, D_Handle thread, U64 endt_u
         }break;
         case OperatingSystem_Mac:
         {
-          NotImplemented;
+          // TODO(yuraiz)
+          // NotImplemented;
         }break;
         default: { InvalidPath; }break;
       }
@@ -3466,7 +3467,8 @@ d_ctrl_thread__entry_point(void *p)
     {
       D_EntityCtx *entity_ctx = &d_ctrl_state->ctrl_thread_entity_store->ctx;
       D_EntityArray threads = d_entity_array_from_kind(entity_ctx, D_EntityKind_Thread);
-      REGS_RegBlockX64 *blocks = push_array(scratch.arena, REGS_RegBlockX64, threads.count);
+      // TODO(yuraiz): check if that's actually needed
+      // REGS_RegBlockX64 *blocks = push_array(scratch.arena, REGS_RegBlockX64, threads.count);
       {
         for EachIndex(idx, threads.count)
         {
@@ -3646,7 +3648,7 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, Rng1U64 vaddr_rang
   EH_PtrCtx eh_ptr_ctx   = { .pc_vaddr = max_U64, .text_vaddr = max_U64, .data_vaddr = max_U64, .func_vaddr = max_U64, .ptr_align = 0 };
   
   //- read module's signature bytes
-  U64  module_sig_size  = Max(elf_magic_string.size, sizeof(PE_DosMagic));
+  U64  module_sig_size  = Max(Max(elf_magic_string.size, mach_magic_string.size), sizeof(PE_DosMagic));
   U8  *module_sig_bytes = push_array(scratch.arena, U8, module_sig_size);
   dmn_process_read(process.dmn_handle, rng_1u64(vaddr_range.min, vaddr_range.min + module_sig_size), module_sig_bytes);
   
@@ -3941,11 +3943,20 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, Rng1U64 vaddr_rang
   }
   
   //////////////////////////////
+  //- parse MACH-O module
+  //
+  else if(str8_match(str8(module_sig_bytes, mach_magic_string.size), mach_magic_string, 0))
+  {
+    // TODO(yuraiz): I guess we can do something here
+  }
+
+  //////////////////////////////
   //- rjf: pick default initial debug info path
   //
   String8 initial_debug_info_path = str8_zero();
   {
     String8 exe_folder = str8_chop_last_slash(path);
+    String8 exe_name   = str8_skip_last_slash(path);
     String8List dbg_path_candidates = {0};
     //
     //~ TODO(rjf): @linux_port PLEASE READ RYAN vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
@@ -3975,6 +3986,11 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, Rng1U64 vaddr_rang
     str8_list_pushf(scratch.arena, &dbg_path_candidates, "%S.pdb", path);
     str8_list_pushf(scratch.arena, &dbg_path_candidates, "%S.rdi", str8_chop_last_dot(path));
     str8_list_pushf(scratch.arena, &dbg_path_candidates, "%S.rdi", path);
+
+    // TODO(yuraiz): support more macOS debug paths
+    // macOS path
+    str8_list_pushf(scratch.arena, &dbg_path_candidates, "%S.dSYM/Contents/Resources/DWARF/%S", path, exe_name);
+
     for(String8Node *n = dbg_path_candidates.first; n != 0; n = n->next)
     {
       String8 candidate_path = n->string;
@@ -4638,8 +4654,7 @@ d_ctrl_thread__eval_scope_begin(Arena *arena, D_BreakpointList *user_bps, D_Enti
                 node = n;
                 break;
               }
-            }
-            
+            }            
             // rjf: cached? -> take cached result
             if(node != 0)
             {

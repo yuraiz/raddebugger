@@ -29,7 +29,7 @@ link_font_provider="-L/opt/homebrew/lib -lfreetype"
 
 # --- Choose Compile/Link Lines -----------------------------------------------
 # NOTE(yuraiz): All warnings are disabled
-clang_common="-ObjC -I../src/ -I/opt/homebrew/include/freetype2/ -I../local/ -DBUILD_GIT_HASH=\"$git_hash\" -DBUILD_GIT_HASH_FULL=\"$git_hash_full\" -Wno-unknown-warning-option -fdiagnostics-absolute-paths -Wall -Wno-missing-braces -Wno-unused-function -Wno-writable-strings -Wno-unused-value -Wno-unused-variable -Wno-unused-local-typedef -Wno-deprecated-register -Wno-deprecated-declarations -Wno-unused-but-set-variable -Wno-single-bit-bitfield-constant-conversion -Wno-compare-distinct-pointer-types -Wno-initializer-overrides -Wno-incompatible-pointer-types-discards-qualifiers -Wno-for-loop-analysis -Wno-switch -Wno-format -Xclang -flto-visibility-public-std -D_USE_MATH_DEFINES -Dstrdup=_strdup -Dgnu_printf=printf"
+clang_common="-ObjC -I../src/ -I/opt/homebrew/include/freetype2/ -I../local/ -DBUILD_GIT_HASH=\"$git_hash\" -DBUILD_GIT_HASH_FULL=\"$git_hash_full\" -fdiagnostics-absolute-paths -Wno-unknown-warning-option -Wall -Wno-missing-braces -Wno-unused-function -Wno-writable-strings -Wno-unused-value -Wno-unused-variable -Wno-unused-local-typedef -Wno-deprecated-register -Wno-deprecated-declarations -Wno-unused-but-set-variable -Wno-single-bit-bitfield-constant-conversion -Wno-compare-distinct-pointer-types -Wno-initializer-overrides -Wno-incompatible-pointer-types-discards-qualifiers -Wno-for-loop-analysis -Wno-switch -Wno-format -Xclang -flto-visibility-public-std -D_USE_MATH_DEFINES -Dstrdup=_strdup -Dgnu_printf=printf"
 compile_debug="$compiler -g -O0 -DBUILD_DEBUG=1 ${clang_common} ${auto_compile_flags}"
 compile_release="$compiler -g -O2 -DBUILD_DEBUG=0 ${clang_common} ${auto_compile_flags}"
 compile_link="-lpthread -lm -ldl"
@@ -40,6 +40,14 @@ if [[ $release ]]; then compile="$compile_release"; fi
 # --- Prep Directories --------------------------------------------------------
 mkdir -p build
 mkdir -p local
+
+# --- Build & Run Mig files ---------------------------------------------------
+if [[ $mig ]]
+then
+  echo "[generating mig files]"
+  gen_dir="src/demon/mac/generated"
+  mig -user "$gen_dir/mig_client.c" -server "$gen_dir/mig_server.c" -header "$gen_dir/mig_client.h" -sheader "$gen_dir/mig_server.h" src/demon/mac/mig.defs
+fi
 
 # --- Build & Run Metaprogram -------------------------------------------------
 if [[ $meta ]]
@@ -53,9 +61,10 @@ fi
 
 # --- Build Everything (@build_targets) ---------------------------------------
 cd build
-if [[ $raddbg ]];                then didbuild=1 && $compile ../src/raddbg/raddbg_main.c                                    $compile_link $link_render $link_font_provider $out raddbg; fi
-if [[ $radbin ]];                then didbuild=1 && $compile ../src/radbin/radbin_main.c                                    $compile_link $out radbin; fi
-if [[ $radlink ]];               then didbuild=1 && $compile ../src/linker/lnk.c                                            $compile_link $out radlink; fi
+if [[ $raddbg ]];  then didbuild=1 && $compile ../src/raddbg/raddbg_main.c $compile_link $link_render $link_font_provider $out raddbg; fi
+if [[ $raddbg ]];  then codesign --entitlements ../data/macos.entitlements.plist -s - raddbg; fi
+if [[ $radbin ]];  then didbuild=1 && $compile ../src/radbin/radbin_main.c $compile_link $out radbin; fi
+if [[ $radlink ]]; then didbuild=1 && $compile ../src/linker/lnk.c         $compile_link $out radlink; fi
 cd ..
 
 # --- Warn On No Builds -------------------------------------------------------
