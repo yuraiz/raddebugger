@@ -27,6 +27,8 @@ fp_ct_release_data_provider_info(void *info, const void *data, size_t size)
 internal CTFontRef
 fp_ct_font_make_sized(CGFontRef cg_font, F32 size)
 {
+  // NOTE(yuraiz): That makes the size consistent with the FreeType backend.
+  size *= 96.0 / 72.0;
   CTFontRef result = 0;
   if (cg_font != 0)
   {
