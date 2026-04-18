@@ -21,7 +21,11 @@ dmn_mac_read_dyld_images(Arena *arena, DMN_MAC_Process *process)
   kern_return_t status_code = task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
   if(status_code != 0)
   {
-    fprintf(stderr, "Failed to read task dyld info\n");
+    if(status_code != MACH_SEND_INVALID_DEST)
+    {
+      fprintf(stderr, "Failed to read task dyld info: %s\n", mach_error_string(status_code));
+    }
+    return result;
   }
   Assert(info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_64);
 
@@ -373,6 +377,26 @@ dmn_mac_process_alloc(pid_t pid, DMN_MAC_ProcessState state, DMN_MAC_Process *pa
   return process;
 }
 
+internal DMN_MAC_Module *
+dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
+{
+  Temp scratch = scratch_begin(0, 0);
+  DMN_MAC_Module *module = &dmn_mac_entity_alloc(DMN_MAC_EntityKind_Module)->module;
+
+  // TODO(yuraz): I guess we can read more useful info from here
+  MACH_Bin info = mach_extract_file_info(scratch.arena, load_address, dmn_mac_mach_read_op_mem, process->task);
+  
+  DLLPushBack(process->ctx->first_module, process->ctx->last_module, module);
+  process->ctx->module_count += 1;
+
+  module->base_vaddr = load_address; 
+  module->name_vaddr = name_vaddr;
+  module->size       = mach_compute_image_size(info);
+  
+  scratch_end(scratch);
+  return module;
+}
+
 internal DMN_MAC_ProcessCtx *
 dmn_mac_process_ctx_alloc(DMN_MAC_Process *process, B32 is_rebased)
 {
@@ -715,36 +739,6 @@ dmn_mac_push_event_create_process(Arena *arena, DMN_EventList *events, DMN_MAC_P
   e->code      = process->pid;
   e->tls_model = DMN_TlsModel_Gnu; // TODO: use dynamic linker path to figure out correct enum here
 
-  DMN_MAC_ImageArray images = dmn_mac_read_dyld_images(scratch.arena, process);
-
-  char* path_buffer = push_array(scratch.arena, char, PATH_MAX);
-  for EachIndex(i, images.count)
-  {
-    U64 load_address = (U64)images.items[i].imageLoadAddress;
-    U64 string_address = (U64)images.items[i].imageFilePath;
-    dmn_mac_mach_read_op_mem(string_address, PATH_MAX, path_buffer, process->task);
-
-    String8 path = str8_cstring(path_buffer);
-
-    // TODO(yuraz): I guess we can read more useful info from here
-    MACH_Bin info = mach_extract_file_info(scratch.arena, load_address, dmn_mac_mach_read_op_mem, process->task);
-
-    DMN_MAC_Module *module = &dmn_mac_entity_alloc(DMN_MAC_EntityKind_Module)->module;
-
-    // TODO(yuraiz): Dynamic module events and more info
-    DMN_Event *e = dmn_event_list_push(arena, events);
-    e->kind             = DMN_EventKind_LoadModule;
-    e->process          = dmn_mac_handle_from_process(process);
-    e->thread           = dmn_mac_handle_from_thread(process->first_thread);
-    e->module           = dmn_mac_handle_from_module(module);
-    e->arch             = process->ctx->arch;
-    e->address          = load_address;
-    e->string           = push_str8_copy(arena, path);
-    e->size             = mach_compute_image_size(info);
-  }
-
-  struct mach_header_64 header;
-
   scratch_end(scratch);
 }
 
@@ -794,27 +788,24 @@ dmn_mac_push_event_exit_thread(Arena *arena, DMN_EventList *events, DMN_MAC_Thre
 }
 
 internal void
-dmn_mac_push_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread, DMN_MAC_Module *module)
+dmn_mac_push_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, DMN_MAC_Module *module)
 {
-  // TODO: reporting this module breaks ctrl thread
-  // TODO(yuraiz)
-  // String8 module_name = dmn_mac_read_string(arena, thread->process->fd, module->name_vaddr);
-  // if(!str8_match(module_name, str8_lit("linux-vdso.so.1"), 0))
-  // {
-  //   DMN_Event *e = dmn_event_list_push(arena, events);
-  //   e->kind             = DMN_EventKind_LoadModule;
-  //   e->process          = dmn_mac_handle_from_process(thread->process);
-  //   e->thread           = dmn_mac_handle_from_thread(thread);
-  //   e->module           = dmn_mac_handle_from_module(module);
-  //   e->arch             = thread->process->ctx->arch;
-  //   e->address          = module->base_vaddr;
-  //   e->size             = module->size;
-  //   e->string           = module_name;
-  //   e->elf_phdr_vrange  = r1u64(module->phvaddr, module->phvaddr + module->phentsize * module->phcount);
-  //   e->elf_phdr_entsize = module->phentsize;
-  //   e->tls_index        = module->tls_index;
-  //   e->tls_offset       = module->tls_offset;
-  // }
+  Temp scratch = scratch_begin(&arena, 1);
+
+  char* path_buffer = push_array(scratch.arena, char, PATH_MAX);
+  dmn_mac_mach_read_op_mem(module->name_vaddr, PATH_MAX, path_buffer, process->task);
+  String8 path = str8_cstring(path_buffer);
+
+  DMN_Event *e = dmn_event_list_push(arena, events);
+  e->kind            = DMN_EventKind_LoadModule;
+  e->process         = dmn_mac_handle_from_process(process);
+  e->module          = dmn_mac_handle_from_module(module);
+  e->arch            = process->ctx->arch;
+  e->address         = module->base_vaddr;
+  e->string          = push_str8_copy(arena, path);
+  e->size            = module->size;
+
+  scratch_end(scratch);
 }
 
 internal void
@@ -995,7 +986,7 @@ dmn_mac_event_create_process(Arena *arena, DMN_EventList *events, pid_t pid, DMN
  
   for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
   {
-    dmn_mac_push_event_load_module(arena, events, process->first_thread, module);
+    dmn_mac_push_event_load_module(arena, events, process, module);
   }
   dmn_mac_push_event_handshake_complete(arena, events, process);
   
@@ -1022,91 +1013,17 @@ dmn_mac_event_exit_process(Arena *arena, DMN_EventList *events, pid_t pid)
 }
 
 internal void
-dmn_mac_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread, U64 name_space_id, U64 new_link_map_vaddr)
+dmn_mac_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
 {
-  DMN_MAC_Process *process = thread->process;
-  
-  // TODO(yuraiz)
-  // GNU_LinkMap64 map = {0};
-  // for(U64 map_vaddr = new_link_map_vaddr; map_vaddr != 0; map_vaddr = map.next_vaddr)
-  // {
-  //   // read out new link map item
-  //   if(gnu_read_link_map(dmn_mac_machine_op_mem_read, &process->fd, map_vaddr, process->ctx->dl_class, &map) != MachineOpResult_Ok) { break; }
-    
-  //   // was module already loaded?
-  //   DMN_MAC_Module *module = hash_table_search_u64_raw(process->ctx->loaded_modules_ht, map.addr_vaddr);
-  //   if(module) { continue; }
-    
-  //   // clone process ctx
-  //   if(process->is_cow)
-  //   {
-  //     process->is_cow = 0;
-  //     process->ctx    = dmn_mac_process_ctx_clone(process, process->ctx);
-  //   }
-    
-  //   // alloc module
-  //   module = dmn_mac_module_alloc(process->ctx, process->fd, map.addr_vaddr, map.name_vaddr, name_space_id, 0);
-    
-  //   // push load module event
-  //   dmn_mac_push_event_load_module(arena, events, thread, module);
-  // }
+  DMN_MAC_Module *module = dmn_mac_module_alloc(process, load_address, name_vaddr);
+  dmn_mac_push_event_load_module(arena, events, process, module);
 }
 
 internal void
-dmn_mac_event_unload_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, U64 rdebug_vaddr)
+dmn_mac_event_unload_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, DMN_MAC_Module *module)
 {
-  // TODO(yuraiz)
-  // Temp scratch = scratch_begin(&arena, 1);
-  
-  // DMN_MAC_ProcessCtx *ctx = process->ctx;
-  
-  // // flag every module as inactive
-  // for EachNode(module, DMN_MAC_Module, ctx->first_module)
-  // {
-  //   module->is_live = 0;
-  // }
-  
-  // // mark live modules
-  // B32                is_64bit    = ctx->dl_class == ELF_Class_64;
-  // GNU_RDebugInfoList rdebug_list = gnu_parse_rdebug(scratch.arena, is_64bit, rdebug_vaddr, dmn_mac_machine_op_mem_read, &process->fd);
-  // for EachNode(rdebug_n, GNU_RDebugInfoNode, rdebug_list.first)
-  // {
-  //   GNU_LinkMapList link_map_list = gnu_parse_link_map_list(scratch.arena, is_64bit, rdebug_n->v.r_map, dmn_mac_machine_op_mem_read, &process->fd);
-  //   for EachNode(link_map_n, GNU_LinkMapNode, link_map_list.first)
-  //   {
-  //     DMN_MAC_Module *module = hash_table_search_u64_raw(ctx->loaded_modules_ht, link_map_n->v.addr_vaddr);
-  //     module->is_live = 1;
-  //   }
-  // }
-  
-  // // collect unloaded modules
-  // DMN_MAC_ModulePtrList to_release = {0};
-  // for EachNode(module, DMN_MAC_Module, ctx->first_module)
-  // {
-  //   if(!module->is_live)
-  //   {
-  //     dmn_mac_module_ptr_list_push(scratch.arena, &to_release, module);
-  //   }
-  // }
-  
-  // // clone process context
-  // if(to_release.count > 0)
-  // {
-  //   if(process->is_cow)
-  //   {
-  //     process->is_cow = 0;
-  //     process->ctx    = dmn_mac_process_ctx_clone(process, process->ctx);
-  //   }
-  // }
-  
-  // // push events and clean up unloaded modules
-  // for EachNode(module_n, DMN_MAC_ModulePtrNode, to_release.first)
-  // {
-  //   dmn_mac_push_event_unload_module(arena, events, process, module_n->v);
-  //   dmn_mac_module_release(process->ctx, module_n->v);
-  // }
-  
-  // scratch_end(scratch);
+  dmn_mac_push_event_unload_module(arena, events, process, module);
+  dmn_mac_module_release(process->ctx, module);
 }
 
 internal void
@@ -1147,57 +1064,6 @@ dmn_mac_event_breakpoint(Arena *arena, DMN_EventList *events, DMN_ActiveTrap *us
     }
   }
 
-  // TODO(yuraiz)
-  if(probe_type == DMN_MAC_ProbeType_InitComplete)
-  {
-    B32 is_init_completed = 0;
-    
-    DMN_MAC_Probe *probe = process->ctx->probes[DMN_MAC_ProbeType_InitComplete];
-    U64 name_space_id = 0, rdebug_addr = 0;
-    if(!stap_read_arg_u(probe->args.v[0], process->ctx->arch, thread->reg_block, dmn_mac_stap_memory_read, process, &name_space_id)) { goto init_complete_exit; }
-    if(!stap_read_arg_u(probe->args.v[1], process->ctx->arch, thread->reg_block, dmn_mac_stap_memory_read, process, &rdebug_addr))   { goto init_complete_exit; }
-    
-    GNU_RDebugInfo64 rdebug = {0};
-    if(gnu_read_r_debug(dmn_mac_machine_op_mem_read, &process, rdebug_addr, process->ctx->arch, &rdebug) != MachineOpResult_Ok) { goto init_complete_exit; }
-    if(rdebug.r_version < 1) { goto init_complete_exit; }
-    
-    dmn_mac_event_load_module(arena, events, thread, name_space_id, rdebug.r_map);
-    
-    is_init_completed = 1;
-    init_complete_exit:;
-    AssertAlways(is_init_completed);
-  }
-  else if(probe_type == DMN_MAC_ProbeType_RelocComplete)
-  {
-    B32 is_reloc_completed = 0;
-    
-    DMN_MAC_Probe *probe = process->ctx->probes[DMN_MAC_ProbeType_RelocComplete];
-    U64 name_space_id = 0, new_link_map_addr = 0;
-    if(!stap_read_arg_u(probe->args.v[0], process->ctx->arch, thread->reg_block, dmn_mac_stap_memory_read, process, &name_space_id))     { goto reloc_complete_exit; }
-    if(!stap_read_arg_u(probe->args.v[2], process->ctx->arch, thread->reg_block, dmn_mac_stap_memory_read, process, &new_link_map_addr)) { goto reloc_complete_exit; }
-    
-    dmn_mac_event_load_module(arena, events, thread, name_space_id, new_link_map_addr);
-    
-    is_reloc_completed = 1;
-    reloc_complete_exit:;
-    AssertAlways(is_reloc_completed);
-  }
-  else if(probe_type == DMN_MAC_ProbeType_UnmapComplete)
-  {
-    B32 is_unmap_completed = 0;
-    
-    DMN_MAC_Probe *probe = process->ctx->probes[DMN_MAC_ProbeType_UnmapComplete];
-    U64 name_space_id = 0, rdebug_vaddr = 0;
-    if(!stap_read_arg_u(probe->args.v[0], process->ctx->arch, thread->reg_block, dmn_mac_stap_memory_read, process, &name_space_id)) { goto unmap_complete_exit; }
-    if(!stap_read_arg_u(probe->args.v[1], process->ctx->arch, thread->reg_block, dmn_mac_stap_memory_read, process, &rdebug_vaddr))  { goto unmap_complete_exit; }
-    
-    dmn_mac_event_unload_module(arena, events, process, rdebug_vaddr);
-    
-    is_unmap_completed = 1;
-    unmap_complete_exit:;
-    AssertAlways(is_unmap_completed);
-  }
-  
   if(probe_type == DMN_MAC_ProbeType_Null)
   {
     // rollback IP on user traps
@@ -1298,45 +1164,6 @@ dmn_mac_event_attach(Arena *arena, DMN_EventList *events, pid_t pid)
   
   // create process
   DMN_MAC_Process *process = dmn_mac_event_create_process(arena, events, pid, 0, DMN_MAC_CreateProcessFlag_DebugSubprocesses|DMN_MAC_CreateProcessFlag_Rebased);
-  
-  // extract threads from /proc/pid/task
-  // TODO(yuraiz)
-  // {
-  //   String8 task_path = str8f(scratch.arena, "/proc/%d/task", pid);
-  //   DIR *task_dirp = opendir((char *)task_path.str);
-  //   if(task_dirp)
-  //   {
-  //     for(;;)
-  //     {
-  //       struct dirent *dirent = readdir(task_dirp);
-  //       if(dirent == 0) { break; }
-        
-  //       String8 tid_str = str8_cstring_capped(dirent->d_name, dirent->d_name + NAME_MAX);
-  //       if(str8_match(tid_str, str8_lit(".."), 0) || str8_match(tid_str, str8_lit("."), 0)) { continue; }
-  //       U64     tid_64  = u64_from_str8(tid_str, 10);
-  //       pid_t   tid     = (pid_t)tid_64;
-  //       AssertAlways(tid == tid_64);
-        
-  //       if(tid == pid) { continue; } // main thread was created during create process sequence
-  //       dmn_mac_event_create_thread(arena, events, process, tid);
-  //     }
-      
-  //     OS_MAC_RETRY_ON_EINTR(closedir(task_dirp));
-  //   }
-  // }
-  
-  // TODO(yuraiz)
-  // extract modules from r_debug
-  {
-    B32                is_64bit      = process->ctx->dl_class == ELF_Class_64;
-    GNU_RDebugInfoList rdebug_list   = gnu_parse_rdebug(scratch.arena, is_64bit, process->ctx->rdebug_vaddr, dmn_mac_machine_op_mem_read, &process);
-    U64                name_space_id = 0;
-    for EachNode(rdebug_n, GNU_RDebugInfoNode, rdebug_list.first)
-    {
-      dmn_mac_event_load_module(arena, events, process->first_thread, name_space_id, rdebug_n->v.r_map);
-      name_space_id += 1;
-    }
-  }
   
   // handshake complete
   dmn_mac_push_event_handshake_complete(arena, events, process);
@@ -1735,11 +1562,14 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       {
         for EachNode(process, DMN_MAC_Process, dmn_mac_state->first_process)
         {
+          //////////////////////////
+          //-yuraiz monitor threads
+          //
           thread_act_array_t threads = NULL;
           mach_msg_type_number_t threads_len = 0;
           task_threads(process->task, &threads, &threads_len);
 
-          // Generate exit thread events
+          // generate exit thread events
           for EachNode(thread, DMN_MAC_Thread, process->first_thread)
           {
             B32 exists = 0;
@@ -1756,7 +1586,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             }
           }
 
-          // Generate new thread events
+          // generate new thread events
           for EachIndex(i, threads_len)
           {
             B32 exists = 0;
@@ -1775,6 +1605,50 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           }
 
           vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
+
+          ////////////////////
+          //- yuraiz: monitor modules
+          //
+          DMN_MAC_ImageArray images = dmn_mac_read_dyld_images(scratch.arena, process);
+
+          // generate unload module events
+          for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+          {
+            B32 exists = 0;
+            for EachIndex(i, images.count)
+            {
+              U64 load_address = (U64)images.items[i].imageLoadAddress;
+              if(module->base_vaddr == load_address)
+              {
+                exists = 1;
+              }
+            }
+            if(!exists)
+            {
+              dmn_mac_event_unload_module(arena, &events, process, module);
+            }
+          }
+
+          // generate load module events
+          for EachIndex(i, images.count)
+          {
+            U64 load_address = (U64)images.items[i].imageLoadAddress;
+            U64 name_vaddr   = (U64)images.items[i].imageFilePath;
+
+            B32 exists = 0;
+            for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
+            {
+              if(module->base_vaddr == load_address)
+              {
+                exists = 1;
+              }
+            }
+
+            if(!exists)
+            {
+              dmn_mac_event_load_module(arena, &events, process, load_address, name_vaddr);
+            }
+          }
         }
 
         continue;
