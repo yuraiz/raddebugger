@@ -236,9 +236,9 @@ REGS_RegCodeARM64_x25,
 REGS_RegCodeARM64_x26,
 REGS_RegCodeARM64_x27,
 REGS_RegCodeARM64_x28,
-REGS_RegCodeARM64_x29,
-REGS_RegCodeARM64_x30,
-REGS_RegCodeARM64_x31,
+REGS_RegCodeARM64_fp,
+REGS_RegCodeARM64_lr,
+REGS_RegCodeARM64_sp,
 REGS_RegCodeARM64_pc,
 REGS_RegCodeARM64_cpsr,
 REGS_RegCodeARM64_v0,
@@ -346,9 +346,9 @@ REGS_RegCodeARM64_COUNT,
 typedef enum REGS_AliasCodeARM64
 {
 REGS_AliasCodeARM64_NULL,
-REGS_AliasCodeARM64_fp,
-REGS_AliasCodeARM64_lr,
-REGS_AliasCodeARM64_sp,
+REGS_AliasCodeARM64_x29,
+REGS_AliasCodeARM64_x30,
+REGS_AliasCodeARM64_x31,
 REGS_AliasCodeARM64_COUNT,
 } REGS_AliasCodeARM64;
 
@@ -481,9 +481,9 @@ REGS_Reg64 x25;
 REGS_Reg64 x26;
 REGS_Reg64 x27;
 REGS_Reg64 x28;
-REGS_Reg64 x29;
-REGS_Reg64 x30;
-REGS_Reg64 x31;
+REGS_Reg64 fp;
+REGS_Reg64 lr;
+REGS_Reg64 sp;
 REGS_Reg64 pc;
 REGS_Reg32 cpsr;
 REGS_Reg128 v0;
