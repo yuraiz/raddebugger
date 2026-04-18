@@ -726,7 +726,6 @@ rb_thread_entry_point(void *p)
             {
               for(RB_FileNode *n = input_files_from_format_table[RB_FileFormat_MACHO].first; n != 0; n = n->next)
               {
-                // TODO(yuraiz): Not guarateed that mach-o has dwarf.
                 if(n->v->format_flags & RB_FileFormatFlag_HasDWARF)
                 {
                   got_exe = 1;
