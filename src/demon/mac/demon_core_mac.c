@@ -17,8 +17,8 @@ dmn_mac_read_dyld_images(Arena *arena, DMN_MAC_Process *process)
   DMN_MAC_ImageArray result = {0};
 
   struct task_dyld_info info;
-  mach_msg_type_number_t info_cnt = THREAD_EXTENDED_INFO_COUNT;
-  kern_return_t status_code = task_info(process->task, TASK_DYLD_INFO, (thread_info_t)&info, &info_cnt);
+  mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
+  kern_return_t status_code = task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
   if(status_code != 0)
   {
     fprintf(stderr, "Failed to read task dyld info\n");
@@ -46,6 +46,58 @@ dmn_mac_read_dyld_images(Arena *arena, DMN_MAC_Process *process)
   result.items = image_info_array;
 
   return result;
+}
+
+internal kern_return_t
+dmn_mac_vm_region_recurse_deepest(
+  mach_port_t task,
+  mach_vm_address_t* address,
+  mach_vm_size_t* size,
+  natural_t* depth,
+  vm_prot_t* protection,
+  unsigned int* user_tag)
+{
+  struct vm_region_submap_short_info_64 submap_info;
+  mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
+  while (true)
+  {
+    kern_return_t status_code =
+      mach_vm_region_recurse(task, address, size, depth, (vm_region_recurse_info_t)&submap_info, &count);
+    if (status_code != 0) {
+      return status_code;
+    }
+    if (!submap_info.is_submap) {
+      *protection = submap_info.protection;
+      *user_tag = submap_info.user_tag;
+      return 0;
+    }
+    ++*depth;
+  }
+}
+
+internal kern_return_t
+dmn_mac_compute_stack_range(
+  mach_port_t task,
+  mach_vm_address_t* address,
+  mach_vm_size_t* size)
+{ 
+  natural_t depth;
+  vm_prot_t protection;
+  unsigned int user_tag;
+  
+  // TODO(yuraiz): Check if the stack can consist from multiple segments.
+  kern_return_t status_code =
+  dmn_mac_vm_region_recurse_deepest(task, address, size, &depth, &protection, &user_tag);
+  
+  if(user_tag != VM_MEMORY_STACK)
+  {
+    *address = 0;
+    *size = 0;
+    return 1;
+  }
+  // NOTE(yuraiz): Not sure if that's exactly right, but it matches pthread's internal data.
+  *size -= 512 - 32;
+  return 0;
 }
 
 internal B32
@@ -215,9 +267,11 @@ dmn_mac_process_read(DMN_MAC_Process* process, Rng1U64 range, void *dst)
   U64 result = 0;
   if(process)
   {
-    U64 to_read = dim_1u64(range);
+    mach_vm_address_t start = range.min;
+    mach_vm_size_t to_read = dim_1u64(range);
     mach_vm_size_t readCount = 0;
-    kern_return_t status_code = mach_vm_read_overwrite(process->task, range.min, to_read, (mach_vm_address_t)dst, &readCount);
+    kern_return_t status_code = mach_vm_read_overwrite(process->task, start, to_read, (mach_vm_address_t)dst, &readCount);
+    
     result = readCount;
   }
   return result;
@@ -429,15 +483,28 @@ dmn_mac_thread_alloc(DMN_MAC_Process *process, DMN_MAC_ThreadState thread_state,
   thread->state     = thread_state;
   thread->process   = process;
   thread->reg_block = reg_block;
-  if(thread_state == DMN_MAC_ThreadState_Stopped)
-  {
-    thread->is_reg_block_dirty = !dmn_mac_thread_read_reg_block(thread);
-  }
 
-  // pthread_t* pthread_from_mach_thread_np(tid);
-
-// int pthread_getname_np(pthread_t thread, char *name, size_t len);
+  // NOTE(yuraiz): It's safe to read the registers even if the thread isn't suspended.
+  thread->is_reg_block_dirty = !dmn_mac_thread_read_reg_block(thread);
   
+  struct thread_identifier_info identifier_info;
+  mach_msg_type_number_t count = THREAD_IDENTIFIER_INFO_COUNT;
+  kern_return_t kr = thread_info(thread->tid,
+                                 THREAD_IDENTIFIER_INFO,
+                                 (thread_info_t)&identifier_info,
+                                 &count);
+  // NOTE(yuraiz): Don't know yet if it's even close, but it points to pthread_s->tsd[]
+  thread->thread_local_base = identifier_info.thread_handle;
+  // TODO(yuraiz): use identifier_info->thread_id
+  
+  // compute stack bounds
+  U64 stack_pointer = dmn_mac_thread_read_sp(thread);
+  mach_vm_size_t stack_size = 0;
+  dmn_mac_compute_stack_range(thread->process->task, &stack_pointer, &stack_size);
+
+  thread->stackaddr = stack_pointer;
+  thread->stackbottom = stack_pointer - stack_size;
+
   // add thread to the list
   DLLPushBack(process->first_thread, process->last_thread, thread);
   process->thread_count += 1;
@@ -639,7 +706,7 @@ dmn_mac_process_from_pid(pid_t pid)
 internal void
 dmn_mac_push_event_create_process(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process)
 {
-  Temp scratch = scratch_begin(0, 0);
+  Temp scratch = scratch_begin(&arena, 1);
   // push create process event
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind      = DMN_EventKind_CreateProcess;
@@ -694,11 +761,12 @@ internal void
 dmn_mac_push_event_create_thread(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread)
 {
   DMN_Event *e = dmn_event_list_push(arena, events);
-  e->kind    = DMN_EventKind_CreateThread;
-  e->process = dmn_mac_handle_from_process(thread->process);
-  e->thread  = dmn_mac_handle_from_thread(thread);
-  e->arch    = thread->process->ctx->arch;
-  e->code    = thread->tid;
+  e->kind                = DMN_EventKind_CreateThread;
+  e->process             = dmn_mac_handle_from_process(thread->process);
+  e->thread              = dmn_mac_handle_from_thread(thread);
+  e->arch                = thread->process->ctx->arch;
+  e->code                = thread->tid;
+  e->instruction_pointer = dmn_mac_thread_read_ip(thread);
 
   struct thread_extended_info info;
   mach_msg_type_number_t info_cnt = THREAD_EXTENDED_INFO_COUNT;
@@ -1463,7 +1531,7 @@ dmn_ctrl_kill(DMN_CtrlCtx *ctx, DMN_Handle process_handle, U32 exit_code)
   DMN_MAC_Process *process = dmn_mac_process_from_handle(process_handle);
   if(process)
   {
-    result = OS_MAC_RETRY_ON_EINTR(kill(process->pid, SIGKILL)) >= 0;
+    result = OS_MAC_RETRY_ON_EINTR(kill(process->pid, SIGTERM)) >= 0;
   }
   mutex_drop(dmn_mac_state->halter_mutex);
   return result;
@@ -1954,15 +2022,28 @@ dmn_arch_from_thread(DMN_Handle thread_handle)
 internal U64
 dmn_stack_base_vaddr_from_thread(DMN_Handle thread_handle)
 {
-  // TODO(yuraiz)
-  return 0;
+  B32 result = 0;
+  DMN_MAC_Thread *thread = dmn_mac_thread_from_handle(thread_handle);
+  if(thread)
+  {
+    // TODO(yuraiz): maybe stackaddr is what's actually needed here?;
+    result = thread->stackbottom;
+  }
+  return result;
 }
 
 internal U64
 dmn_tls_root_vaddr_from_thread(DMN_Handle thread_handle)
 {
   // TODO(yuraiz)
-  return 0;
+  B32 result = 0;
+  DMN_MAC_Thread *thread = dmn_mac_thread_from_handle(thread_handle);
+  if(thread)
+  {
+    // TODO(yuraiz): understand the offset
+    result = thread->thread_local_base;
+  }
+  return result;
 }
 
 internal B32
@@ -1976,8 +2057,8 @@ dmn_thread_read_reg_block(DMN_Handle thread_handle, void *reg_block)
     {
       U64 reg_block_size = regs_block_size_from_arch(thread->process->ctx->arch);
       MemoryCopy(reg_block, thread->reg_block, reg_block_size);
+      result = 1;
     }
-    result = 1;
   }
   return result;
 }
