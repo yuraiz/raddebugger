@@ -9,6 +9,7 @@
 
 #define FP_BACKEND_DWRITE 1
 #define FP_BACKEND_FREETYPE 2
+#define FP_BACKEND_CORE_TEXT 3
 
 ////////////////////////////////
 //~ rjf: Decide On Backend
@@ -19,7 +20,7 @@
 # elif OS_LINUX
 #  define FP_BACKEND FP_BACKEND_FREETYPE
 # elif OS_MAC
-#  define FP_BACKEND FP_BACKEND_FREETYPE
+#  define FP_BACKEND FP_BACKEND_CORE_TEXT
 # endif
 #endif
 
@@ -35,6 +36,8 @@
 # include "dwrite/font_provider_dwrite.h"
 #elif FP_BACKEND == FP_BACKEND_FREETYPE
 # include "freetype/font_provider_freetype.h"
+#elif FP_BACKEND == FP_BACKEND_CORE_TEXT
+# include "core_text/font_provider_core_text.h"
 #else
 # error Font provider backend not specified.
 #endif
