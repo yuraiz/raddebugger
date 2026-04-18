@@ -440,12 +440,11 @@ d2r_rdi_reg_code_from_dw_reg_x64(DW_RegX64 v)
 internal RDI_RegCodeX64
 d2r_rdi_reg_code_from_dw_reg_arm64(DW_RegX64 v)
 {
-  // TODO(yuraiz): Implement arm64 registers
   RDI_RegCodeX64 result = RDI_RegCode_nil;
   switch (v) {
     default: {} break;
-#define X(reg_dw, val_dw, reg_rdi, off, size) case DW_RegX64_##reg_dw: { result = RDI_RegCodeX64_##reg_rdi; } break;
-    DW_Regs_X64_XList
+#define X(reg_dw, val_dw, reg_rdi, off, size) case DW_RegArm64_##reg_dw: { result = RDI_RegCodeArm64_##reg_rdi; } break;
+    DW_Regs_Arm64_XList
 #undef X
   }
   return result;
