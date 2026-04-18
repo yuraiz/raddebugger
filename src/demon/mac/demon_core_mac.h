@@ -357,7 +357,7 @@ internal void                 dmn_mac_push_event_create_process(Arena *arena, DM
 internal void                 dmn_mac_push_event_exit_process(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process);
 internal void                 dmn_mac_push_event_create_thread(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread);
 internal void                 dmn_mac_push_event_exit_thread(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread, U64 exit_code);
-internal void                 dmn_mac_push_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread, DMN_MAC_Module *module);
+internal void                 dmn_mac_push_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, DMN_MAC_Module *module);
 internal void                 dmn_mac_push_event_unload_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, DMN_MAC_Module *module);
 internal void                 dmn_mac_push_event_handshake_complete(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process);
 internal void                 dmn_mac_push_event_breakpoint(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread, U64 address);
@@ -370,8 +370,8 @@ internal DMN_MAC_Thread *     dmn_mac_event_create_thread(Arena *arena, DMN_Even
 internal void                 dmn_mac_event_exit_thread(Arena *arena, DMN_EventList *events, pid_t tid, U64 exit_code);
 internal DMN_MAC_Process *    dmn_mac_event_create_process(Arena *arena, DMN_EventList *events, pid_t pid, DMN_MAC_Process *parent_process, DMN_MAC_CreateProcessFlags flags);
 internal void                 dmn_mac_event_exit_process(Arena *arena, DMN_EventList *events, pid_t pid);
-internal void                 dmn_mac_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread, U64 name_space_id, U64 new_link_map_vaddr);
-internal void                 dmn_mac_event_unload_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, U64 rdebug_vaddr);
+internal void                 dmn_mac_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, U64 name_space_id, U64 new_link_map_vaddr);
+internal void                 dmn_mac_event_unload_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process, DMN_MAC_Module *module);
 internal void                 dmn_mac_event_breakpoint(Arena *arena, DMN_EventList *events, DMN_ActiveTrap *user_traps, pid_t tid);
 internal void                 dmn_mac_event_data_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid);
 internal void                 dmn_mac_event_halt(Arena *arena, DMN_EventList *events);
