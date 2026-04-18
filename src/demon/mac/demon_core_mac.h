@@ -130,7 +130,10 @@ typedef struct DMN_MAC_Thread
   B32                     pass_through_signal;
   U64                     pass_through_signo;
   U64                     orig_rax;
-
+  U64                     thread_local_base;
+  // NOTE(yuraiz): Those match internal pthread_s values
+  U64                     stackaddr;
+  U64                     stackbottom;
   struct DMN_MAC_Thread *next;
   struct DMN_MAC_Thread *prev;
 } DMN_MAC_Thread;
