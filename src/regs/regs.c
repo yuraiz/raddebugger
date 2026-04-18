@@ -79,7 +79,7 @@ regs_rsp_from_arch_block(Arch arch, void *block)
   {
     default:{}break;
     case Arch_x64:{result = ((REGS_RegBlockX64 *)block)->rsp.u64;}break;
-    case Arch_arm64:{result = ((REGS_RegBlockARM64 *)block)->x31.u64;}break;
+    case Arch_arm64:{result = ((REGS_RegBlockARM64 *)block)->sp.u64;}break;
     case Arch_x86:{NotImplemented;}break;
   }
   return result;
@@ -104,7 +104,7 @@ regs_arch_block_write_rsp(Arch arch, void *block, U64 rsp)
   {
     default:{}break;
     case Arch_x64:{((REGS_RegBlockX64 *)block)->rsp.u64 = rsp;}break;
-    case Arch_arm64:{((REGS_RegBlockARM64 *)block)->x31.u64 = rsp;}break;
+    case Arch_arm64:{((REGS_RegBlockARM64 *)block)->sp.u64 = rsp;}break;
     case Arch_x86:{NotImplemented;}break;
   }
 }

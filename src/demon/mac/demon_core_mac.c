@@ -185,9 +185,9 @@ dmn_mac_thread_read_reg_block(DMN_MAC_Thread *thread)
       // thread_get_state(thread->tid, ARM_EXCEPTION_STATE64_V2, (thread_state_t)&exception_state, &count);
 
       MemoryCopy(&reg_block->x0, thread_state.__x, sizeof(thread_state.__x));
-      reg_block->x29.u64 = thread_state.__fp;
-      reg_block->x30.u64 = thread_state.__lr;
-      reg_block->x31.u64 = thread_state.__sp;
+      reg_block->fp.u64 = thread_state.__fp;
+      reg_block->lr.u64 = thread_state.__lr;
+      reg_block->sp.u64 = thread_state.__sp;
       reg_block->pc.u64 = thread_state.__pc;
       reg_block->cpsr.u32 = thread_state.__cpsr;
 
@@ -226,9 +226,9 @@ dmn_mac_thread_write_reg_block(DMN_MAC_Thread *thread)
       arm_debug_state64_t debug_state = {0};
 
       MemoryCopy(thread_state.__x, &reg_block->x0, sizeof(thread_state.__x));
-      thread_state.__fp = reg_block->x29.u64;
-      thread_state.__lr = reg_block->x30.u64;
-      thread_state.__sp = reg_block->x31.u64;
+      thread_state.__fp = reg_block->fp.u64;
+      thread_state.__lr = reg_block->lr.u64;
+      thread_state.__sp = reg_block->sp.u64;
       thread_state.__pc = reg_block->pc.u64;
       thread_state.__cpsr = reg_block->cpsr.u32;
       

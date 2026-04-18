@@ -236,9 +236,9 @@ REGS_RegTableARM64:
   {x26                            64   Normal}
   {x27                            64   Normal}
   {x28                            64   Normal}
-  {x29                            64   Normal} // Frame pointer
-  {x30                            64   Normal} // Link register
-  {x31                            64   Normal} // Stack pointer
+  {fp                             64   Normal} // Frame pointer
+  {lr                             64   Normal} // Link register
+  {sp                             64   Normal} // Stack pointer
   {pc                             64   Normal} // Program counter
   {cpsr                           32   Normal} // Current program status register
   // Vector registers
@@ -347,9 +347,9 @@ REGS_RegTableARM64:
 @table(name base off size usage)
 REGS_AliasTableARM64:
 {
-  {fp              x29    0      64     Normal}
-  {lr              x30    0      64     Normal}
-  {sp              x31    0      64     Normal}
+  {x29              fp    0      64     Normal}
+  {x30              lr    0      64     Normal}
+  {x31              sp    0      64     Normal}
 }
 
 

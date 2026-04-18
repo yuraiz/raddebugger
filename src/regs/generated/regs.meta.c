@@ -869,9 +869,9 @@ str8_lit_comp("x25"),
 str8_lit_comp("x26"),
 str8_lit_comp("x27"),
 str8_lit_comp("x28"),
-str8_lit_comp("x29"),
-str8_lit_comp("x30"),
-str8_lit_comp("x31"),
+str8_lit_comp("fp"),
+str8_lit_comp("lr"),
+str8_lit_comp("sp"),
 str8_lit_comp("pc"),
 str8_lit_comp("cpsr"),
 str8_lit_comp("v0"),
@@ -978,9 +978,9 @@ str8_lit_comp("mdscr_el1"),
 String8 regs_g_alias_code_arm64_string_table[4] =
 {
 str8_lit_comp(""),
-str8_lit_comp("fp"),
-str8_lit_comp("lr"),
-str8_lit_comp("sp"),
+str8_lit_comp("x29"),
+str8_lit_comp("x30"),
+str8_lit_comp("x31"),
 };
 
 REGS_Rng regs_g_reg_code_arm64_rng_table[134] =
@@ -1015,9 +1015,9 @@ REGS_Rng regs_g_reg_code_arm64_rng_table[134] =
 {(U16)OffsetOf(REGS_RegBlockARM64, x26), 8},
 {(U16)OffsetOf(REGS_RegBlockARM64, x27), 8},
 {(U16)OffsetOf(REGS_RegBlockARM64, x28), 8},
-{(U16)OffsetOf(REGS_RegBlockARM64, x29), 8},
-{(U16)OffsetOf(REGS_RegBlockARM64, x30), 8},
-{(U16)OffsetOf(REGS_RegBlockARM64, x31), 8},
+{(U16)OffsetOf(REGS_RegBlockARM64, fp), 8},
+{(U16)OffsetOf(REGS_RegBlockARM64, lr), 8},
+{(U16)OffsetOf(REGS_RegBlockARM64, sp), 8},
 {(U16)OffsetOf(REGS_RegBlockARM64, pc), 8},
 {(U16)OffsetOf(REGS_RegBlockARM64, cpsr), 4},
 {(U16)OffsetOf(REGS_RegBlockARM64, v0), 16},
@@ -1124,9 +1124,9 @@ REGS_Rng regs_g_reg_code_arm64_rng_table[134] =
 REGS_Slice regs_g_alias_code_arm64_slice_table[4] =
 {
 {0},
-{REGS_RegCodeARM64_x29, 0, 8},
-{REGS_RegCodeARM64_x30, 0, 8},
-{REGS_RegCodeARM64_x31, 0, 8},
+{REGS_RegCodeARM64_fp, 0, 8},
+{REGS_RegCodeARM64_lr, 0, 8},
+{REGS_RegCodeARM64_sp, 0, 8},
 };
 
 C_LINKAGE_END
