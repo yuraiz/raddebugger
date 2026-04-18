@@ -418,24 +418,6 @@ dmn_mac_process_ctx_alloc(DMN_MAC_Process *process, B32 is_rebased)
 //     dl_class = ehdr.e_ident[ELF_Identifier_Class];
 //   }
   
-//   // query xsave layout
-//   U64             xcr0         = 0;
-//   U64             xsave_size   = 0;
-//   X64_XSaveLayout xsave_layout = {0};
-//   if(arch == Arch_x64)
-//   {
-//     X64_XSave xsave = {0};
-//     if(OS_LNX_RETRY_ON_EINTR(ptrace(PTRACE_GETREGSET, process->pid, (void *)NT_X86_XSTATE, &(struct iovec){.iov_base = &xsave, .iov_len = sizeof(xsave) }) >= 0))
-//     {
-//       // Linux stores xcr0 bits in fxstate padding,
-//       // see https://github.com/torvalds/linux/blob/6548d364a3e850326831799d7e3ea2d7bb97ba08/arch/x86/include/asm/user.h#L25
-//       xcr0         = *(U64 *)((U8 *)&xsave + 464);
-//       xsave_size   = x64_get_xsave_size();
-//       xsave_layout = x64_get_xsave_layout(xcr0);
-//     }
-//     else { Assert(0 && "failed to get xstate"); }
-//   }
-  
 //   // gather probes
 //   DMN_MAC_Probe **known_probes = push_array(ctx_arena, DMN_MAC_Probe *, DMN_MAC_ProbeType_Count);
 //   {
@@ -472,9 +454,6 @@ dmn_mac_process_ctx_alloc(DMN_MAC_Process *process, B32 is_rebased)
   // ctx->dl_class          = dl_class;
   ctx->loaded_modules_ht = hash_table_init(ctx->arena, 0x1000);
   // ctx->probes            = known_probes;
-  // ctx->xcr0              = xcr0;
-  // ctx->xsave_size        = Max(xsave_size, sizeof(X64_XSave));
-  // ctx->xsave_layout      = xsave_layout;
   
   // TODO(yuraiz)
   // // create main module

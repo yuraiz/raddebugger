@@ -249,11 +249,6 @@ typedef struct DMN_MAC_ProcessCtx
 
   String8List free_reg_blocks;
   String8List free_reg_block_nodes;
-
-  // x64
-  U64             xcr0;
-  U64             xsave_size;
-  X64_XSaveLayout xsave_layout;
 } DMN_MAC_ProcessCtx;
 
 typedef struct DMN_MAC_Entity
