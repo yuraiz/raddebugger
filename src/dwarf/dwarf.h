@@ -1727,6 +1727,91 @@ typedef enum DW_ExprOpEnum
   // X(Tr,      62, nil,    0, 0)  \
   // X(Ldtr,    63, nil,    0, 0)
 
+
+// NOTE(yuraiz): Not processor registers:
+// RA_SIGN_STATE - Return address signed state pseudo-register
+// TPIDRRO_ELO - EL0 Read/Write Software Thread ID register
+// TPIDRRO_EL1 - EL1 Software Thread ID register
+// TPIDRRO_EL2 - EL2 Software Thread ID register
+// TPIDRRO_EL3 - EL3 Software Thread ID register
+// Not included:
+// 40-45 reserved 
+// 46-63 beta
+// 96-127 beta
+#define DW_Regs_Arm64_XList                         \
+  X(X0,               0,     x0,            0,  8) \
+  X(X1,               1,     x1,            0,  8) \
+  X(X2,               2,     x2,            0,  8) \
+  X(X3,               3,     x3,            0,  8) \
+  X(X4,               4,     x4,            0,  8) \
+  X(X5,               5,     x5,            0,  8) \
+  X(X6,               6,     x6,            0,  8) \
+  X(X7,               7,     x7,            0,  8) \
+  X(X8,               8,     x8,            0,  8) \
+  X(X9,               9,     x9,            0,  8) \
+  X(X10,              10,    x10,           0,  8) \
+  X(X11,              11,    x11,           0,  8) \
+  X(X12,              12,    x12,           0,  8) \
+  X(X13,              13,    x13,           0,  8) \
+  X(X14,              14,    x14,           0,  8) \
+  X(X15,              15,    x15,           0,  8) \
+  X(X16,              16,    x16,           0,  8) \
+  X(X17,              17,    x17,           0,  8) \
+  X(X18,              18,    x18,           0,  8) \
+  X(X19,              19,    x19,           0,  8) \
+  X(X20,              20,    x20,           0,  8) \
+  X(X21,              21,    x21,           0,  8) \
+  X(X22,              22,    x22,           0,  8) \
+  X(X23,              23,    x23,           0,  8) \
+  X(X24,              24,    x24,           0,  8) \
+  X(X25,              25,    x25,           0,  8) \
+  X(X26,              26,    x26,           0,  8) \
+  X(X27,              27,    x27,           0,  8) \
+  X(X28,              28,    x28,           0,  8) \
+  X(X29,              29,    x29,           0,  8) \
+  X(X30,              30,    x30,           0,  8) \
+  X(SP,               31,    sp,            0,  8) \
+  X(PC,               32,    pc,            0,  8) \
+  X(ELR_mode,         33,    elr_mode,      0,  8) \
+  X(RA_SIGN_STATE,    34,    ra_sign_state, 0,  8) \
+  X(TPIDRRO_ELO,      35,    tpidrro_elo,   0,  8) \
+  X(TPIDR_ELO,        36,    tpidr_elo,     0,  8) \
+  X(TPIDR_EL1,        37,    tpidr_el1,     0,  8) \
+  X(TPIDR_EL2,        38,    tpidr_el2,     0,  8) \
+  X(TPIDR_EL3,        39,    tpidr_el3,     0,  8) \
+  X(V0,               64,    v0,            0, 16) \
+  X(V1,               65,    v1,            0, 16) \
+  X(V2,               66,    v2,            0, 16) \
+  X(V3,               67,    v3,            0, 16) \
+  X(V4,               68,    v4,            0, 16) \
+  X(V5,               69,    v5,            0, 16) \
+  X(V6,               70,    v6,            0, 16) \
+  X(V7,               71,    v7,            0, 16) \
+  X(V8,               72,    v8,            0, 16) \
+  X(V9,               73,    v9,            0, 16) \
+  X(V10,              74,    v10,           0, 16) \
+  X(V11,              75,    v11,           0, 16) \
+  X(V12,              76,    v12,           0, 16) \
+  X(V13,              77,    v13,           0, 16) \
+  X(V14,              78,    v14,           0, 16) \
+  X(V15,              79,    v15,           0, 16) \
+  X(V16,              80,    v16,           0, 16) \
+  X(V17,              81,    v17,           0, 16) \
+  X(V18,              82,    v18,           0, 16) \
+  X(V19,              83,    v19,           0, 16) \
+  X(V20,              84,    v20,           0, 16) \
+  X(V21,              85,    v21,           0, 16) \
+  X(V22,              86,    v22,           0, 16) \
+  X(V23,              87,    v23,           0, 16) \
+  X(V24,              88,    v24,           0, 16) \
+  X(V25,              89,    v25,           0, 16) \
+  X(V26,              90,    v26,           0, 16) \
+  X(V27,              91,    v27,           0, 16) \
+  X(V28,              92,    v28,           0, 16) \
+  X(V29,              93,    v29,           0, 16) \
+  X(V30,              94,    v30,           0, 16) \
+  X(V31,              95,    v31,           0, 16) 
+
 typedef U32 DW_Reg;
 
 typedef DW_Reg DW_RegX64;
@@ -1737,6 +1822,15 @@ typedef enum DW_RegX64Enum
 #undef X
   DW_RegX64_Last
 } DW_RegX64Enum;
+
+typedef DW_Reg DW_RegArm64;
+typedef enum DW_RegArm64Enum
+{
+#define X(_N,_ID,...) DW_RegArm64_##_N = _ID,
+  DW_Regs_Arm64_XList
+#undef X
+  DW_RegArm64_Last
+} DW_RegArm64Enum;
 
 ////////////////////////////////
 // Speced Encodings

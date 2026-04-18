@@ -222,10 +222,9 @@ dw_reg_pos_from_code_x64(DW_Reg reg_code)
 internal U64
 dw_reg_size_from_code_arm64(DW_Reg reg_code)
 {
-  // TODO(yuraiz): Implement arm64 registers
   switch (reg_code) {
-#define X(reg_name_dw, reg_code_dw, reg_name_rdi, reg_pos, reg_size) case DW_RegX64_##reg_name_dw: return reg_size;
-    DW_Regs_X64_XList
+#define X(reg_name_dw, reg_code_dw, reg_name_rdi, reg_pos, reg_size) case DW_RegArm64_##reg_name_dw: return reg_size;
+    DW_Regs_Arm64_XList
 #undef X
   }
   return 0;
@@ -234,10 +233,9 @@ dw_reg_size_from_code_arm64(DW_Reg reg_code)
 internal U64
 dw_reg_pos_from_code_arm64(DW_Reg reg_code)
 {
-  // TODO(yuraiz): Implement arm64 registers
   switch (reg_code) {
-#define X(reg_name_dw, reg_code_dw, reg_name_rdi, reg_pos, reg_size) case DW_RegX64_##reg_name_dw: return reg_pos;
-    DW_Regs_X64_XList
+#define X(reg_name_dw, reg_code_dw, reg_name_rdi, reg_pos, reg_size) case DW_RegArm64_##reg_name_dw: return reg_pos;
+    DW_Regs_Arm64_XList
 #undef X
   }
   return max_U64;
@@ -274,8 +272,7 @@ dw_reg_count_from_arch(Arch arch)
   default: { NotImplemented; } // fall-through
   case Arch_Null: return 0;
   case Arch_x64: return DW_RegX64_Last;
-  // TODO(yuraiz): Implement arm64 registers
-  case Arch_arm64: return DW_RegX64_Last;
+  case Arch_arm64: return DW_RegArm64_Last;
   }
 }
 
