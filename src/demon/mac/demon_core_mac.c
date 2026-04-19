@@ -389,7 +389,7 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
   DLLPushBack(process->ctx->first_module, process->ctx->last_module, module);
   process->ctx->module_count += 1;
 
-  module->base_vaddr = load_address; 
+  module->base_vaddr = load_address - mach_compute_image_offset(info); 
   module->name_vaddr = name_vaddr;
   module->size       = mach_compute_image_size(info);
   
