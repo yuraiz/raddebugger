@@ -3830,6 +3830,7 @@ ctrl_thread__module_open(CTRL_Handle process, CTRL_Handle module, Rng1U64 vaddr_
   U32 rdi_dbg_time = 0;
   Guid rdi_dbg_guid = {0};
   String8 exe_dbg_path = {0};
+  String8 dsym_dbg_path = {0};
   String8 rdi_dbg_path = {0};
   String8 raddbg_data = {0};
   Rng1U64 raddbg_section_voff_range = {0};
@@ -4143,7 +4144,18 @@ ctrl_thread__module_open(CTRL_Handle process, CTRL_Handle module, Rng1U64 vaddr_
   //
   else if(str8_match(str8(module_sig_bytes, mach_magic_string.size), mach_magic_string, 0))
   {
-    // TODO(yuraiz): I guess we can do something here
+    MACH_Bin mach_bin = {0};   
+    struct mach_header_64 header;
+    dmn_process_read_struct(process.dmn_handle, vaddr_range.min, &header);
+    
+    U64 read_address = vaddr_range.min + sizeof(header);
+    String8 command_buf = dmn_process_read_block(arena, process.dmn_handle, rng_1u64(read_address, read_address + header.sizeofcmds));
+    mach_bin.command_count = header.ncmds;
+    mach_bin.size = command_buf.size;
+    mach_bin.buf = command_buf.str;
+
+    Guid uuid = mach_get_uuid(mach_bin);
+    dsym_dbg_path = mach_try_locate_dsym(arena, path, uuid);
   }
 
   //////////////////////////////
@@ -4183,9 +4195,9 @@ ctrl_thread__module_open(CTRL_Handle process, CTRL_Handle module, Rng1U64 vaddr_
     str8_list_pushf(scratch.arena, &dbg_path_candidates, "%S.rdi", str8_chop_last_dot(path));
     str8_list_pushf(scratch.arena, &dbg_path_candidates, "%S.rdi", path);
 
-    // TODO(yuraiz): support more macOS debug paths
-    // macOS path
+    // macOS paths
     str8_list_pushf(scratch.arena, &dbg_path_candidates, "%S.dSYM/Contents/Resources/DWARF/%S", path, exe_name);
+    str8_list_push(scratch.arena, &dbg_path_candidates, dsym_dbg_path);
 
     for(String8Node *n = dbg_path_candidates.first; n != 0; n = n->next)
     {

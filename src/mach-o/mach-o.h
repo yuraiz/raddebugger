@@ -29,7 +29,7 @@ internal MACH_Bin mach_bin_read_from_file(Arena* arena, String8 bin_path);
 
 internal MACH_Bin mach_read_extract_file_info(Arena* arena, U64 start_address, MACH_ReadOp read_from, U64 src);
 internal Guid mach_get_uuid(MACH_Bin info);
-internal MACH_Bin mach_try_locate_dsym(Arena* arena, String8 image_file_path, Guid uuid);
+internal String8 mach_try_locate_dsym(Arena* arena, String8 image_file_path, Guid uuid);
 internal void mach_dump_commands(MACH_Bin info);
 
 #endif // MACH_O_H

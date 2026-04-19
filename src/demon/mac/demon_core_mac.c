@@ -389,6 +389,9 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
   DLLPushBack(process->ctx->first_module, process->ctx->last_module, module);
   process->ctx->module_count += 1;
 
+  // NOTE(yuraiz): That address expected to have the offset in some places,
+  // but in other's it should be just load_address.
+  // That offset ctrl_thread__module_open magic detection, but is required for the correct symbol mapping.
   module->base_vaddr = load_address - mach_compute_image_offset(info); 
   module->name_vaddr = name_vaddr;
   module->size       = mach_compute_image_size(info);
