@@ -11,6 +11,11 @@
 #include <mach-o/dyld.h>
 #define internal static
 
+#include <CoreFoundation/CFURL.h>
+#include <CoreFoundation/CFUUID.h>
+//- yuraiz: those link to the private DebugSymbols.framework
+extern CFURLRef DBGCopyFullDSYMURLForUUID(CFUUIDRef uuid, CFURLRef exec_url);
+
 internal B32
 dmn_mac_mach_read_op_file(U64 address, U64 size, void* dst, U64 src)
 {
@@ -222,57 +227,28 @@ mach_compute_image_size(MACH_Bin info)
   return result;
 }
 
-// TODO(yuraiz): I think we actually interested only in the file location
-internal MACH_Bin
+internal String8
 mach_try_locate_dsym(Arena* arena, String8 image_file_path, Guid uuid)
 {
   Temp scratch = scratch_begin(&arena, 1);
-
-  String8 candidate = push_str8f(scratch.arena, "%S.dSYM", image_file_path);
-  if(os_folder_path_exists(candidate))
+  CFStringRef cf_uuid_string = CFStringCreateWithCString(kCFAllocatorDefault,
+    (const char *)string_from_guid(scratch.arena, uuid).str, kCFStringEncodingUTF8);
+  CFUUIDRef cf_uuid = CFUUIDCreateFromString(kCFAllocatorDefault, cf_uuid_string);
+  CFRelease(cf_uuid_string);
+  
+  CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, image_file_path.str, image_file_path.size, FALSE);
+  CFURLRef dsym_url = DBGCopyFullDSYMURLForUUID(cf_uuid, url);
+  CFRelease(cf_uuid);
+  CFRelease(url);
+  
+  if(dsym_url)
   {
-    String8 dwarf_folder = push_str8f(scratch.arena, "%S/Contents/Resources/DWARF", candidate);
-
-    String8 bin_path = str8_zero();
-
-    OS_FileIter *iter = os_file_iter_begin(scratch.arena, dwarf_folder, 0);
-    for(OS_FileInfo info = {0}; os_file_iter_next(scratch.arena, iter, &info);)
-    {
-      if(!(info.props.flags & FilePropertyFlag_IsFolder))
-      {
-        if(bin_path.size == 0)
-        {
-          bin_path = push_str8_copy(scratch.arena, info.name);
-        }
-        else
-        {
-          Assert(0 && "Unexpected binary file count in .dSYM");
-        }
-      }
-    }
-    os_file_iter_end(iter);
-    
-    if(bin_path.size > 0)
-    {
-      bin_path = push_str8f(scratch.arena, "%S/%S", dwarf_folder, bin_path);
-      
-      OS_Handle file = os_file_open(OS_AccessFlag_Read|OS_AccessFlag_ShareRead, bin_path);
-      MACH_Bin result = mach_extract_file_info(arena, 0, dmn_mac_mach_read_op_file, file.u64[0]);
-      Guid debug_uuid = mach_get_uuid(result);
-      if(MemoryMatch(&uuid, &debug_uuid, sizeof(Guid)))
-      {
-        return result;
-      }
-    }
+    U8 dsym_path[PATH_MAX];
+    CFURLGetFileSystemRepresentation(dsym_url, true, dsym_path, sizeof(dsym_path) - 1);
+    CFRelease(dsym_url);
+    return str8_copy(arena, str8_cstring((char*)dsym_path));
   }
-
-  // TODO(yuraiz): Search in other locations
-  // Also try
-  // mdfind 'com_apple_xcode_dsym_uuids=*'
-
-  scratch_end(scratch);
-  MACH_Bin result = {0};
-  return result;
+  return str8_zero();
 }
 
 internal void
@@ -463,11 +439,10 @@ mach_get_uuid(MACH_Bin info);
    Guid result = {0};
    return result;
 }
-internal MACH_Bin 
+internal String8 
 mach_try_locate_dsym(Arena* arena, String8 image_file_path, Guid uuid);
 {
-   MACH_Bin result = {0};
-   return result;
+   return str8_zero();
 }
 internal void 
 mach_dump_commands(MACH_Bin info);

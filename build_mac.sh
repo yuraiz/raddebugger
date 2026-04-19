@@ -24,7 +24,7 @@ git_hash_full=$(git rev-parse HEAD)
 # --- Compile/Link Line Definitions -------------------------------------------
 
 # --- Per-Build Settings ------------------------------------------------------
-link_render="-framework OpenGL -framework CoreFoundation -framework Cocoa"
+link_render="-F/System/Library/PrivateFrameworks -framework OpenGL -framework CoreFoundation -framework Cocoa -framework DebugSymbols"
 
 # --- Choose Compile/Link Lines -----------------------------------------------
 # NOTE(yuraiz): All warnings are disabled
