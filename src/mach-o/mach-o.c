@@ -157,6 +157,43 @@ dw_input_from_mach_bin(Arena *arena, MACH_Bin bin, String8 data)
 }
 
 internal U64
+mach_compute_image_offset(MACH_Bin info)
+{
+  U64 result = 0;
+  U8 *command_buf = info.buf;
+  for EachIndex(i, info.command_count)
+  {
+    struct load_command *ld_cmd = (struct load_command *)command_buf;
+    U32 cmd = ld_cmd->cmd;
+    U32 size = ld_cmd->cmdsize;
+    switch(cmd)
+    {
+      default:{break;}
+      case LC_SEGMENT:
+      {
+        struct segment_command *command = (struct segment_command*)ld_cmd;
+        if(str8_match(str8_cstring(command->segname), str8_lit("__PAGEZERO"), 0))
+        {
+          result += command->vmsize;
+          return result;
+        }
+      } break;
+      case LC_SEGMENT_64:
+      {
+        struct segment_command_64 *command = (struct segment_command_64*)ld_cmd;
+        if(str8_match(str8_cstring(command->segname), str8_lit("__PAGEZERO"), 0))
+        {
+          result += command->vmsize;
+          return result;
+        }
+      } break;
+    }
+    command_buf += size;
+  }
+  return result;
+}
+
+internal U64
 mach_compute_image_size(MACH_Bin info)
 {
   U64 result = 0;
