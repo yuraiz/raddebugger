@@ -52,6 +52,82 @@ dmn_mac_read_dyld_images(Arena *arena, DMN_MAC_Process *process)
   return result;
 }
 
+internal B32
+dmn_mac_write_to_protected(
+    const task_t task,
+    const mach_vm_address_t address,
+    const void* data,
+    const size_t size,
+    const bool revert_back
+) {
+    // NOTE(yuraiz): on macOS memory writable XOR executable.
+    // so we need to change the protection before writing to it and revert back after.
+
+    mach_port_t object_name = MACH_PORT_NULL;
+    mach_msg_type_number_t region_info_size = VM_REGION_BASIC_INFO_COUNT_64;
+
+    vm_region_basic_info_64_t region_info = alloca(sizeof(*region_info));
+
+    mach_vm_address_t region_address = address;
+    mach_vm_size_t region_size = (mach_vm_size_t)size;
+    mach_vm_region(
+        task,
+        &region_address,
+        &region_size,
+        VM_REGION_BASIC_INFO_64,
+        (vm_region_info_t)region_info,
+        &region_info_size,
+        &object_name
+    );
+
+    const vm_prot_t old_protection = region_info->protection;
+
+    bool needs_to_change_protection =
+        ((old_protection & VM_PROT_WRITE) == 0 ||
+         (old_protection & VM_PROT_EXECUTE) != 0);
+
+    bool executable_protection_modified = false;
+    if (needs_to_change_protection) {
+        vm_prot_t new_protection = 0;
+
+        if ((old_protection & VM_PROT_EXECUTE) != 0) {
+            new_protection =
+                (old_protection & ~VM_PROT_EXECUTE) | VM_PROT_WRITE;
+            executable_protection_modified = true;
+
+            task_suspend(task);
+        } else {
+            new_protection = (old_protection | VM_PROT_WRITE);
+        }
+
+        mach_vm_protect(
+            task,
+            region_address,
+            region_size,
+            false,
+            new_protection | VM_PROT_COPY
+        );
+    }
+
+    kern_return_t status_code = mach_vm_write(
+        task, address, (vm_offset_t)data, (mach_msg_type_number_t)size
+    );
+
+    // Re-protect the region back to the way it was
+    if ((revert_back || executable_protection_modified) &&
+        needs_to_change_protection) {
+        mach_vm_protect(
+            task, region_address, region_size, false, old_protection
+        );
+
+        if (executable_protection_modified) {
+            task_resume(task);
+        }
+    }
+
+    return status_code == 0;
+}
+
 internal kern_return_t
 dmn_mac_vm_region_recurse_deepest(
   mach_port_t task,
@@ -288,12 +364,7 @@ dmn_mac_process_write(DMN_MAC_Process* process, Rng1U64 range, void *src)
   if(process)
   {
     U64 to_write = dim_1u64(range);
-    kern_return_t status_code = mach_vm_write(process->task, range.min, (vm_offset_t)src, to_write);
-    if(status_code != 0)
-    {
-      printf("Failed to write to process memory: %s\n", mach_error_string(status_code));
-    }
-    result = status_code == 0;
+    result = dmn_mac_write_to_protected(process->task, range.min, src, to_write, true);
   }
   return 0;
 }
@@ -1860,8 +1931,6 @@ dmn_process_read(DMN_Handle process_handle, Rng1U64 range, void *dst)
 internal B32
 dmn_process_write(DMN_Handle process_handle, Rng1U64 range, void *src)
 {
-  // TODO(yuraiz): Investigate if the debugger changes the protection
-  // Before writing, or we shoud do that ourselves.
   DMN_MAC_Process *process = dmn_mac_process_from_handle(process_handle);
   return dmn_mac_process_write(process, range, src);
 }
