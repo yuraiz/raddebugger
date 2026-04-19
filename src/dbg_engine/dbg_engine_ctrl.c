@@ -2859,6 +2859,46 @@ d_unwind_step__pe_x64(D_Handle process_handle, D_Handle module_handle, U64 modul
   return result;
 }
 
+internal CTRL_UnwindStepResult
+ctrl_unwind_step__mac_arm64(CTRL_Handle process_handle, REGS_RegBlockARM64 *regs, U64 endt_us)
+{
+  //////////////////////////////
+  // NOTE(yuraiz): From https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms
+  // > The frame pointer register (x29) must always address a valid frame record.
+  // > Some functions — such as leaf functions or tail calls — may opt not to create an entry in this list.
+  // > As a result, stack traces are always meaningful, even without debug information.
+  // 
+  // That simplifies unwinding.
+
+  B32 is_good = true;
+  B32 is_stale = false;
+
+  U64 fp = regs->fp.u64;
+
+  // validate fp
+  if ((fp == 0) || (!(((fp) & 0xf) == 0)))
+  {
+    is_good = false;
+  }
+  
+  U128 stack_frame = {0};
+  if(is_good && !ctrl_process_memory_read_struct(process_handle, fp, &is_stale, &stack_frame, endt_us))
+  {
+    is_good = false;
+  }
+
+  // NOTE(yuraiz): Return addresses on stack signed by arm64e ABI.
+  // but I don't think that should be supported in the debugger.
+  regs->fp.u64 = stack_frame.u64[0];
+  regs->pc.u64 = stack_frame.u64[1];
+  regs->sp.u64 = fp;
+
+  CTRL_UnwindStepResult result = {0};
+  if(!is_good) {result.flags |= CTRL_UnwindFlag_Error;}
+  if(is_stale) {result.flags |= CTRL_UnwindFlag_Stale;}
+  return result;
+}
+
 //- rjf: abstracted full unwind
 
 internal D_Unwind
@@ -2914,8 +2954,7 @@ d_unwind_from_thread(Arena *arena, D_EntityCtx *ctx, D_Handle thread, U64 endt_u
         }break;
         case OperatingSystem_Mac:
         {
-          // TODO(yuraiz)
-          // NotImplemented;
+          // no concept of frame unwind context
         }break;
         default: { InvalidPath; }break;
       }
@@ -2953,6 +2992,17 @@ d_unwind_from_thread(Arena *arena, D_EntityCtx *ctx, D_Handle thread, U64 endt_u
         case OperatingSystem_Linux:
         {
           step_result = d_unwind_step__dwarf(process_entity->handle, arch, regs_block, &frame_ctx, endt_us);
+        }break;
+        case OperatingSystem_Mac:
+        {
+          switch(arch)
+          {
+            default:{}break;
+            case Arch_arm64:
+            {
+              step_result = ctrl_unwind_step__mac_arm64(process_entity->handle, regs_block, endt_us);
+            }break;
+          }
         }break;
       }
       
