@@ -174,19 +174,11 @@ mach_compute_image_offset(MACH_Bin info)
     switch(cmd)
     {
       default:{break;}
-      case LC_SEGMENT:
-      {
-        struct segment_command *command = (struct segment_command*)ld_cmd;
-        if(str8_match(str8_cstring(command->segname), str8_lit("__PAGEZERO"), 0))
-        {
-          result += command->vmsize;
-          return result;
-        }
-      } break;
       case LC_SEGMENT_64:
       {
         struct segment_command_64 *command = (struct segment_command_64*)ld_cmd;
-        if(str8_match(str8_cstring(command->segname), str8_lit("__PAGEZERO"), 0))
+        String8 segname = str8_cstring(command->segname);
+        if(str8_match_lit("__PAGEZERO", segname, 0))
         {
           result += command->vmsize;
           return result;
@@ -211,15 +203,16 @@ mach_compute_image_size(MACH_Bin info)
     switch(cmd)
     {
       default:{break;}
-      case LC_SEGMENT:
-      {
-        struct segment_command *command = (struct segment_command*)ld_cmd;
-        result += command->vmsize;
-      } break;
       case LC_SEGMENT_64:
       {
         struct segment_command_64 *command = (struct segment_command_64*)ld_cmd;
-        result += command->vmsize;
+        String8 segname = str8_cstring(command->segname);
+        if(str8_match_lit("__PAGEZERO", segname, 0) ||
+           str8_match_lit("__TEXT", segname, 0) ||
+           str8_match_lit("__DATA", segname, 0))
+        {
+          result += command->vmsize;
+        }
       } break;
     }
     command_buf += size;
