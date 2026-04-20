@@ -1493,7 +1493,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       for EachNode(process, DMN_MAC_Process, dmn_mac_state->first_process)
       {
         //- rjf: determine if this process is frozen
-        B32 process_is_frozen = 0;
+        B32 process_is_frozen = dmn_mac_state->is_halting;
         if(ctrls->run_entities_are_processes)
         {
           for EachIndex(idx, ctrls->run_entity_count)
@@ -1540,10 +1540,19 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             is_frozen = !dmn_handle_match(dmn_mac_handle_from_thread(thread), ctrls->single_step_thread);
           }
           
+          struct thread_basic_info info;
+          mach_msg_type_number_t info_cnt = THREAD_BASIC_INFO_COUNT;
+          kern_return_t status_code = thread_info(thread->tid, THREAD_BASIC_INFO, (thread_info_t)&info, &info_cnt);
+          if(status_code != 0)
+          {
+            fprintf(stderr, "Failed to read thread info\n");
+          }
+          B32 was_frozen = info.suspend_count > 0;
+
           // resume thread
           if(!is_frozen)
           {
-            AssertAlways(thread->state == DMN_MAC_ThreadState_Stopped);
+            // AssertAlways(thread->state == DMN_MAC_ThreadState_Stopped);
             
             // write registers
             if(thread->is_reg_block_dirty)
@@ -1551,44 +1560,36 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
               thread->is_reg_block_dirty = !dmn_mac_thread_write_reg_block(thread);
             }
             
+            // TODO(yuraiz): I'm not sure that actually needs implementation.
+            // Don't we already pass the signals?
+            //
             // pass signal to the child process
-            int sig_code = 0;
-            if(thread->pass_through_signal)
+            // int sig_code = 0;
+            // if(thread->pass_through_signal)
+            // {
+            //   thread->pass_through_signal = 0;
+            //   if(!ctrls->ignore_previous_exception)
+            //   {
+            //     sig_code = (int)thread->pass_through_signo;
+            //   }
+            // }
+            if(was_frozen)
             {
-              thread->pass_through_signal = 0;
-              if(!ctrls->ignore_previous_exception)
-              {
-                sig_code = (int)thread->pass_through_signo;
-              }
-            }
-            
-            // resume thread
-            if(OS_MAC_RETRY_ON_EINTR(ptrace(PT_CONTINUE, thread->tid, 0, sig_code)) >= 0)
-            {
-              thread->state              = DMN_MAC_ThreadState_Running;
-              thread->is_reg_block_dirty = 1;
-              // TODO(yuraiz): resume
-              // dmn_mac_thread_ptr_list_push(scratch.arena, &running_threads, thread);
-            }
-            else
-            {
-              if(errno == ESRCH)
-              {
-                // Race note: In multithreaded programs, ptrace(PTRACE_CONT) may fail if a running thread calls
-                // exit_group while we are resuming threads. The kernel begins tearing down the thread group so
-                // the target might not be in a ptrace-soppped state anymore. Handle this by ignoring, on waitpid
-                // we will get chance to report exit event.
-                //
-                // TODO: unfortunatley, kernel also sends us ESRCH whenever ptrace(PTRACE_CONT) is sent to a tracee
-                // that is not in a ptace-stop, so how can we tell these errors apart?
-              }
-              else
-              {
-                // TODO(yuraiz): It sometimes goes here and crashes. I don't actually control the threads yet.
-                // InvalidPath;
-              }
+              thread_resume(thread->tid);
             }
           }
+          else
+          {
+            if(!was_frozen)
+            {
+              thread_suspend(thread->tid);
+            }
+          }
+        }
+
+        if(!process_is_frozen)
+        {
+          task_resume(process->task);
         }
       }
     }
@@ -1613,6 +1614,13 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       
       if(result.timed_out)
       {
+        // NOTE(yuraiz): As I understand task_suspend is reliable enough
+        if(dmn_mac_state->is_halting)
+        {
+          is_halt_done = 1;
+          break;
+        }
+
         for EachNode(process, DMN_MAC_Process, dmn_mac_state->first_process)
         {
           //////////////////////////
@@ -1799,17 +1807,6 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         break;
       }
       
-      if(result.exception == EXC_SOFTWARE &&
-          result.code == EXC_SOFT_SIGNAL &&
-          result.subcode == SIGSTOP)
-      {
-        // NOTE(yuraiz) we would actually like to understand if the signal was sent by us.
-        if(dmn_mac_state->is_halting)
-        {
-          is_halt_done = 1;
-        }
-        break;
-      }
 
       //   {
    
@@ -1873,10 +1870,10 @@ dmn_halt(U64 code, U64 user_data)
       dmn_mac_state->halter_tid     = pthread_mach_thread_np(pthread_self());
       dmn_mac_state->halt_code      = code;
       dmn_mac_state->halt_user_data = user_data;
-      dmn_mac_state->is_halting     = true;
+      dmn_mac_state->is_halting     = 1;
       for EachNode(process, DMN_MAC_Process, dmn_mac_state->first_process)
       {
-        if(OS_MAC_RETRY_ON_EINTR(kill(process->pid, SIGSTOP)) < 0) { Assert(0 && "failed to send SIGSTOP"); }
+        task_suspend(process->task);
       }
     }
   }
