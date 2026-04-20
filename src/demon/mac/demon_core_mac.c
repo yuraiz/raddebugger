@@ -1307,79 +1307,78 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, OS_ProcessLaunchParams *params)
 {
   Temp scratch = scratch_begin(0, 0);
   
-  // NOTE(yuraiz): NSTask api is used, because fork + execve change the underying
-  // mach task after the process was spawned, requiring special handling.
-
   // setup target command line 
-  U64 argc = params->cmd_line.node_count + 1;
-  NSMutableArray<NSString *> *task_args = [NSMutableArray arrayWithCapacity:argc];
-  for EachNode(n, String8Node, params->cmd_line.first->next)
+  U64    argc = params->cmd_line.node_count + 1;
+  char **argv = push_array(scratch.arena, char *, argc);
   {
-    [task_args addObject:NSString_fromUTF8(n->string)];
-  }
-
-  NSURL* task_url = [NSURL fileURLWithPath:NSString_fromUTF8(params->cmd_line.first->string)];
-  NSURL* task_wd = [NSURL fileURLWithPath:NSString_fromUTF8(params->path)];
-
-  NSDictionary *task_env;
-  {
-    U64 count = os_mac_state.default_env_count + params->env.node_count;
-    NSString **keys = push_array(scratch.arena, NSString *, count);
-    NSString **vals = push_array(scratch.arena, NSString *, count);
-    // copy the default environment
-    for EachIndex(i, os_mac_state.default_env_count)
+    U64 idx = 0;
+    for EachNode(n, String8Node, params->cmd_line.first)
     {
-      String8 env_str = str8_cstring(os_mac_state.default_env[i]);
-      U64 divider_pos = str8_find_needle(env_str, 0, str8_lit("="), 0);
-      keys[i] = NSString_fromUTF8(str8_prefix(env_str, divider_pos));
-      vals[i] = NSString_fromUTF8(str8_skip(env_str,  divider_pos + 1));
+      argv[idx] = (char *)str8_copy(scratch.arena, n->string).str;
+      idx += 1;
     }
+  }
+  
+  // setup target environment
+  U64    envc = os_mac_state.default_env_count + params->env.node_count + 1;
+  char **envp = push_array(scratch.arena, char *, envc);
+  {
+    // copy default environment
+    MemoryCopyTyped(envp, os_mac_state.default_env, os_mac_state.default_env_count);
+    
     // copy user environment
     U64 idx = os_mac_state.default_env_count;
     for EachNode(n, String8Node, params->env.first)
     {
-      U64 divider_pos = str8_find_needle(n->string, 0, str8_lit("="), 0);
-      keys[idx] = NSString_fromUTF8(str8_prefix(n->string, divider_pos));
-      vals[idx] = NSString_fromUTF8(str8_skip(n->string,  divider_pos + 1));
+      envp[idx] = (char *)str8_copy(scratch.arena, n->string).str;
       idx += 1;
     }
-
-    task_env = [NSDictionary dictionaryWithObjects:vals
-                                             forKeys:keys
-                                               count:count];
   }
-
-  NSTask* ns_task = [[NSTask alloc] init];
-
-  ns_task.arguments = task_args;
-  ns_task.currentDirectoryURL = task_wd;
-  ns_task.environment = task_env;
-  ns_task.executableURL = task_url;
- 
-  NSError* launch_error;
-  if(![ns_task launchAndReturnError:&launch_error])
+  
+  // create zero-terminated work directory path
+  char *work_dir_path = (char *)str8_copy(scratch.arena, params->path).str;
+  
+  // fork process
+  pid_t pid = fork();
+  
+  // child process
+  if(pid == 0)
   {
-    NSLog(@"Failed to launch the child process: %@", launch_error.localizedDescription);
-    return 0;
+    // Wait for the debugger to attach to the process
+    if(task_suspend(mach_task_self()) != 0) { goto child_exit; }
+
+    // change work directory to tracee
+    if(OS_MAC_RETRY_ON_EINTR(chdir(work_dir_path)) < 0) { goto child_exit; }
+
+    // replace process with target program
+    if(OS_MAC_RETRY_ON_EINTR(execve(argv[0], argv, envp)) < 0) { goto child_exit; }
+    
+    child_exit:;
+    exit(0);
   }
-
-  pid_t pid = ns_task.processIdentifier;
-
-  task_t task = 0;
-  kern_return_t status_code = task_for_pid(mach_task_self(), pid, &task);
-
-  if(status_code != 0)
+  // parent process
+  else if(pid > 0)
   {
-    fprintf(stderr, "failed to call task_for_pid on the child process: %s", mach_error_string(status_code));
-    [ns_task terminate];
-    [ns_task waitUntilExit];
-    return 0;
+    task_t task = 0;
+    kern_return_t status_code = task_for_pid(mach_task_self(), pid, &task);
+    
+    if(status_code != 0)
+    {
+      fprintf(stderr, "failed to call task_for_pid on the child process: %s", mach_error_string(status_code));
+      kill(pid, SIGTERM);
+      return 0;
+    }
+    
+    DMN_MAC_Process* process = dmn_mac_process_alloc(pid, DMN_MAC_ProcessState_Launch, 0, params->debug_subprocesses, 0);
+    process->ctx = dmn_mac_process_ctx_alloc(process, 0);
+
+    status_code = task_resume(task);
+    if(status_code != 0)
+    {
+      fprintf(stderr, "failed to resume the child process: %s\n", mach_error_string(status_code));
+    }
+    ptrace(PT_ATTACHEXC, pid, 0, 0);
   }
-
-  dmn_mac_process_alloc(pid, DMN_MAC_ProcessState_Launch, 0, params->debug_subprocesses, 0);
-
-  // needed to receive mach exceptions
-  ptrace(PT_ATTACHEXC, pid, 0, 0);
 
   scratch_end(scratch);
   return pid;
@@ -1724,16 +1723,44 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             {
               InvalidPath;
             } break;
-            case DMN_MAC_ProcessState_Launch:
             case DMN_MAC_ProcessState_Attach:
             {
               if(result.exception == EXC_SOFTWARE &&
                  result.exception_codes[0] == EXC_SOFT_SIGNAL &&
-                 result.exception_codes[1] == SIGSTOP)
+                 (result.exception_codes[1] == SIGSTOP))
               {
                 if(task_resume(result.task) == 0)
                 {
-
+                  process->state = DMN_MAC_ProcessState_Normal;
+                  goto wait_for_signal;
+                }
+                else { Assert(0 && "failed to resume tracee"); }
+              }
+              else { Assert(0 && "unexpected signal"); }
+            } break;
+            case DMN_MAC_ProcessState_Launch:
+            {
+              if(result.exception == EXC_SOFTWARE &&
+                 result.exception_codes[0] == EXC_SOFT_SIGNAL &&
+                 (result.exception_codes[1] == SIGSTOP))
+              {
+                if(task_resume(result.task) == 0)
+                {
+                  process->state = DMN_MAC_ProcessState_WaitForExec;
+                  goto wait_for_signal;
+                }
+                else { Assert(0 && "failed to resume tracee"); }
+              }
+              else { Assert(0 && "unexpected signal"); }
+            } break;
+            case DMN_MAC_ProcessState_WaitForExec:
+            {
+              if(result.exception == EXC_SOFTWARE &&
+                 result.exception_codes[0] == EXC_SOFT_SIGNAL &&
+                 result.exception_codes[1] == SIGTRAP)
+              {
+                if(task_resume(result.task) == 0)
+                {
                   DMN_MAC_CreateProcessFlags create_flags = process->debug_subprocesses ? DMN_MAC_CreateProcessFlag_DebugSubprocesses : 0;
                   dmn_mac_process_release(process);
                   process = dmn_mac_event_create_process(arena, &events, pid, 0, create_flags);
@@ -1742,14 +1769,11 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
 
                   thread_act_array_t threads = NULL;
                   mach_msg_type_number_t threads_len = 0;
-                  task_threads(result.task, &threads, &threads_len);
-
+                  task_threads(process->task, &threads, &threads_len);
                   for EachIndex(i, threads_len)
                   {
                     dmn_mac_event_create_thread(arena, &events, process, threads[i]);
                   }
-
-                  vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
 
                   goto wait_for_signal;
                 }
@@ -1981,7 +2005,7 @@ dmn_thread_read_reg_block(DMN_Handle thread_handle, void *reg_block)
     DMN_MAC_Thread *thread = dmn_mac_thread_from_handle(thread_handle);
     if(thread)
     {
-      U64 reg_block_size = regs_block_size_from_arch(thread->process->ctx->arch);
+      U64 reg_block_size = regs_block_size_from_arch(Arch_arm64);
       MemoryCopy(reg_block, thread->reg_block, reg_block_size);
       result = 1;
     }

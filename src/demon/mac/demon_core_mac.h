@@ -188,6 +188,7 @@ typedef enum
   DMN_MAC_ProcessState_Null,
   DMN_MAC_ProcessState_Launch,
   DMN_MAC_ProcessState_Attach,
+  DMN_MAC_ProcessState_WaitForExec,
   DMN_MAC_ProcessState_Normal,
 } DMN_MAC_ProcessState;
 

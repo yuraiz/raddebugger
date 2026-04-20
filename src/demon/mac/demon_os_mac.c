@@ -133,6 +133,17 @@ catch_mach_exception_raise(
 
   printf("Got exception %s\n", exc_type_to_string(exception));
 
+	if (result.exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
+		// handling UNIX soft signal
+	
+		pid_t target_pid;
+		pid_for_task(task, &target_pid);
+		ptrace(PT_THUPDATE,
+						target_pid,
+						(caddr_t)(uintptr_t)thread,
+						code[2]);
+	}
+
   task_suspend(task);
 
   dmn_mac_exception_state->last_result = result;
