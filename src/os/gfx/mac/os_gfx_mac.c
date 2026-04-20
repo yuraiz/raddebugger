@@ -80,8 +80,8 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
     return 0;
   }
 
-  NSEventType type = [event type];
-  NSWindow* window = [event window];
+  NSEventType type = event.type;
+  NSWindow* window = event.window;
 
   OS_MAC_Window* os_window = 0;
   if(window != 0)
@@ -100,10 +100,10 @@ os_mac_gfx_next_event(Arena * arena, B32 wait, OS_EventList* evts)
     case NSEventTypeRightMouseUp:
     case NSEventTypeOtherMouseUp:
       {
-        U32 button_number = [event buttonNumber];
+        U32 button_number = event.buttonNumber;
         B32 is_down = type == NSEventTypeLeftMouseDown ||
-                      type == NSEventTypeLeftMouseDown ||
-                      type == NSEventTypeLeftMouseDown;
+                      type == NSEventTypeRightMouseDown ||
+                      type == NSEventTypeOtherMouseDown;
 
         OS_Key key = OS_Key_Null;
         switch(button_number)
