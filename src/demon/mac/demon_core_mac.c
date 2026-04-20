@@ -1585,7 +1585,8 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
               }
               else
               {
-                InvalidPath;
+                // TODO(yuraiz): It sometimes goes here and crashes. I don't actually control the threads yet.
+                // InvalidPath;
               }
             }
           }
