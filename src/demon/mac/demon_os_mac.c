@@ -125,15 +125,16 @@ catch_mach_exception_raise(
   result.thread = thread;
   result.task = task;
   result.exception = exception;
-  result.code_count = code_count;
-  for EachIndex(i, code_count)
-  {
-    result.exception_codes[i] = code[i];
-  }
+	if(code_count > 0) { result.code = code[0]; }
+	if(code_count > 1) { result.subcode = code[1]; }
 
-  printf("Got exception %s\n", exc_type_to_string(exception));
+  printf("Got exception %s (code: %llu subcode: %llu)\n",
+		exc_type_to_string(result.exception), 
+		result.code,
+		result.subcode
+	);
 
-	if (result.exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
+	if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
 		// handling UNIX soft signal
 	
 		pid_t target_pid;
