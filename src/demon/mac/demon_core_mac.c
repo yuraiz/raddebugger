@@ -1372,12 +1372,13 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, OS_ProcessLaunchParams *params)
     DMN_MAC_Process* process = dmn_mac_process_alloc(pid, DMN_MAC_ProcessState_Launch, 0, params->debug_subprocesses, 0);
     process->ctx = dmn_mac_process_ctx_alloc(process, 0);
 
+    ptrace(PT_ATTACHEXC, pid, 0, 0);
+
     status_code = task_resume(task);
     if(status_code != 0)
     {
       fprintf(stderr, "failed to resume the child process: %s\n", mach_error_string(status_code));
     }
-    ptrace(PT_ATTACHEXC, pid, 0, 0);
   }
 
   scratch_end(scratch);
@@ -1410,7 +1411,9 @@ dmn_ctrl_kill(DMN_CtrlCtx *ctx, DMN_Handle process_handle, U32 exit_code)
   DMN_MAC_Process *process = dmn_mac_process_from_handle(process_handle);
   if(process)
   {
-    result = OS_MAC_RETRY_ON_EINTR(kill(process->pid, SIGTERM)) >= 0;
+    kern_return_t status_code = task_terminate(process->task) == 0;
+    result = OS_MAC_RETRY_ON_EINTR(kill(process->pid, SIGKILL)) >= 0;
+    result = OS_MAC_RETRY_ON_EINTR(ptrace(PT_KILL, process->pid, 0, 0)) >= 0;
   }
   mutex_drop(dmn_mac_state->halter_mutex);
   return result;
@@ -1543,46 +1546,46 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           struct thread_basic_info info;
           mach_msg_type_number_t info_cnt = THREAD_BASIC_INFO_COUNT;
           kern_return_t status_code = thread_info(thread->tid, THREAD_BASIC_INFO, (thread_info_t)&info, &info_cnt);
-          if(status_code != 0)
+          //- yuraiz: when the task is killed, the port becomes invalid.
+          if(status_code == 0)
           {
-            fprintf(stderr, "Failed to read thread info\n");
-          }
-          B32 was_frozen = info.suspend_count > 0;
-
-          // resume thread
-          if(!is_frozen)
-          {
-            // AssertAlways(thread->state == DMN_MAC_ThreadState_Stopped);
+            B32 was_frozen = info.suspend_count > 0;
             
-            // write registers
-            if(thread->is_reg_block_dirty)
+            // resume thread
+            if(!is_frozen)
             {
-              thread->is_reg_block_dirty = !dmn_mac_thread_write_reg_block(thread);
+              // AssertAlways(thread->state == DMN_MAC_ThreadState_Stopped);
+              
+              // write registers
+              if(thread->is_reg_block_dirty)
+              {
+                thread->is_reg_block_dirty = !dmn_mac_thread_write_reg_block(thread);
+              }
+              
+              // TODO(yuraiz): I'm not sure that actually needs implementation.
+              // Don't we already pass the signals?
+              //
+              // pass signal to the child process
+              // int sig_code = 0;
+              // if(thread->pass_through_signal)
+              // {
+              //   thread->pass_through_signal = 0;
+              //   if(!ctrls->ignore_previous_exception)
+              //   {
+              //     sig_code = (int)thread->pass_through_signo;
+              //   }
+              // }
+              if(was_frozen)
+              {
+                thread_resume(thread->tid);
+              }
             }
-            
-            // TODO(yuraiz): I'm not sure that actually needs implementation.
-            // Don't we already pass the signals?
-            //
-            // pass signal to the child process
-            // int sig_code = 0;
-            // if(thread->pass_through_signal)
-            // {
-            //   thread->pass_through_signal = 0;
-            //   if(!ctrls->ignore_previous_exception)
-            //   {
-            //     sig_code = (int)thread->pass_through_signo;
-            //   }
-            // }
-            if(was_frozen)
+            else
             {
-              thread_resume(thread->tid);
-            }
-          }
-          else
-          {
-            if(!was_frozen)
-            {
-              thread_suspend(thread->tid);
+              if(!was_frozen)
+              {
+                thread_suspend(thread->tid);
+              }
             }
           }
         }
@@ -1718,7 +1721,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       // intercept initing processes
       {
         pid_t pid = 0;
-        pid_for_task(result.task, &pid);
+        kern_return_t status_code = pid_for_task(result.task, &pid);
         DMN_MAC_Process *process = dmn_mac_process_from_pid(pid);
         
         if(process && process->state != DMN_MAC_ProcessState_Normal)
