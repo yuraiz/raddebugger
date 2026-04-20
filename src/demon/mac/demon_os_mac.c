@@ -128,21 +128,27 @@ catch_mach_exception_raise(
 	if(code_count > 0) { result.code = code[0]; }
 	if(code_count > 1) { result.subcode = code[1]; }
 
-  printf("Got exception %s (code: %llu subcode: %llu)\n",
-		exc_type_to_string(result.exception), 
-		result.code,
-		result.subcode
-	);
 
 	if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
 		// handling UNIX soft signal
 	
+		printf("Got exception %s (code: EXC_SOFT_SIGNAL subcode: %s)\n",
+			exc_type_to_string(result.exception), 
+			strsignal(result.subcode)
+		);
+
 		pid_t target_pid;
 		pid_for_task(task, &target_pid);
 		ptrace(PT_THUPDATE,
 						target_pid,
 						(caddr_t)(uintptr_t)thread,
 						code[2]);
+	} else {
+		printf("Got exception %s (code: %llu subcode: %llu)\n",
+			exc_type_to_string(result.exception), 
+			result.code,
+			result.subcode
+		);
 	}
 
   task_suspend(task);
