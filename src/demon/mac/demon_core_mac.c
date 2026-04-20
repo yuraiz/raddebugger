@@ -1952,7 +1952,7 @@ dmn_stack_base_vaddr_from_thread(DMN_Handle thread_handle)
   if(thread)
   {
     // TODO(yuraiz): maybe stackaddr is what's actually needed here?;
-    result = thread->stackbottom;
+    result = thread->stackaddr;
   }
   return result;
 }
