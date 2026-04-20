@@ -26,8 +26,8 @@ typedef struct DMN_MAC_ExceptionResult
   mach_port_t thread;
   mach_port_t task;
   S32 exception;
-  S64 exception_codes[2];
-  U32 code_count;
+  S64 code;
+  S64 subcode;
   B32 timed_out;
 } DMN_MAC_ExceptionResult;
 

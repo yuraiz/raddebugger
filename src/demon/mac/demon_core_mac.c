@@ -1726,8 +1726,8 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             case DMN_MAC_ProcessState_Attach:
             {
               if(result.exception == EXC_SOFTWARE &&
-                 result.exception_codes[0] == EXC_SOFT_SIGNAL &&
-                 (result.exception_codes[1] == SIGSTOP))
+                 result.code == EXC_SOFT_SIGNAL &&
+                 (result.subcode == SIGSTOP))
               {
                 if(task_resume(result.task) == 0)
                 {
@@ -1741,8 +1741,8 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             case DMN_MAC_ProcessState_Launch:
             {
               if(result.exception == EXC_SOFTWARE &&
-                 result.exception_codes[0] == EXC_SOFT_SIGNAL &&
-                 (result.exception_codes[1] == SIGSTOP))
+                 result.code == EXC_SOFT_SIGNAL &&
+                 (result.subcode == SIGSTOP))
               {
                 if(task_resume(result.task) == 0)
                 {
@@ -1756,8 +1756,8 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             case DMN_MAC_ProcessState_WaitForExec:
             {
               if(result.exception == EXC_SOFTWARE &&
-                 result.exception_codes[0] == EXC_SOFT_SIGNAL &&
-                 result.exception_codes[1] == SIGTRAP)
+                 result.code == EXC_SOFT_SIGNAL &&
+                 result.subcode == SIGTRAP)
               {
                 if(task_resume(result.task) == 0)
                 {
@@ -1800,8 +1800,8 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       }
       
       if(result.exception == EXC_SOFTWARE &&
-          result.exception_codes[0] == EXC_SOFT_SIGNAL &&
-          result.exception_codes[1] == SIGSTOP)
+          result.code == EXC_SOFT_SIGNAL &&
+          result.subcode == SIGSTOP)
       {
         // NOTE(yuraiz) we would actually like to understand if the signal was sent by us.
         if(dmn_mac_state->is_halting)
