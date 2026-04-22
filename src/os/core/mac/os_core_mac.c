@@ -1558,8 +1558,9 @@ main(int argc, char **argv)
         {
           scratch_end(scratch);
           buffer = push_array_no_zero(scratch.arena, U8, cap);
-          size = readlink("/proc/self/exe", (char*)buffer, cap);
-          if(size < cap)
+          size = cap;
+          
+          if(!_NSGetExecutablePath((char*)buffer, &size))
           {
             got_final_result = 1;
             break;
@@ -1569,7 +1570,7 @@ main(int argc, char **argv)
         // rjf: save
         if(got_final_result && size > 0)
         {
-          String8 full_name = str8(buffer, size);
+          String8 full_name = str8_cstring((char*)buffer);
           String8 name_chopped = str8_chop_last_slash(full_name);
           info->binary_path = push_str8_copy(os_mac_state.arena, name_chopped);
         }
