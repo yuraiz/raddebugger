@@ -3034,10 +3034,6 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
     
     //////////////////////////////// 
     
-    RDIM_Scope *global_scope = rdim_scope_chunk_list_push(arena, &g_d2r_shared.scopes, D2R_SCOPE_CHUNK_CAP);
-    
-    //////////////////////////////// 
-    
     // NOTE(yuraiz): Moved to the heap because that variable can blow up the stack.
     RDIM_Type **builtin_types = push_array(scratch.arena, RDIM_Type *, RDI_TypeKind_Count);
     for (RDI_TypeKind type_kind = RDI_TypeKind_FirstBuiltIn; type_kind <= RDI_TypeKind_LastBuiltIn; type_kind += 1) {
