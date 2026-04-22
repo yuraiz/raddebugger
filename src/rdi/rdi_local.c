@@ -15,6 +15,7 @@ arch_from_rdi_arch(RDI_Arch arch)
   {
     case RDI_Arch_NULL:{}break;
     case RDI_Arch_X64:{result = Arch_x64;}break;
+    case RDI_Arch_Arm64:{result = Arch_arm64;}break;
   }
   return result;
 }
@@ -152,6 +153,20 @@ rdi_string_from_reg_code_x64(U64 reg_code)
 }
 
 internal String8
+rdi_string_from_reg_code_arm64(U64 reg_code)
+{
+  String8 result = {0};
+  switch(reg_code)
+  {
+    default:{}break;
+#define X(name, value) case RDI_RegCodeArm64_##name:{result = str8_lit(#name);}break;
+    RDI_RegCodeArm64_XList
+#undef X
+  }
+  return result;
+}
+
+internal String8
 rdi_string_from_reg_code(Arena *arena, RDI_Arch arch, U64 reg_code)
 {
   String8 result = {0};
@@ -160,6 +175,7 @@ rdi_string_from_reg_code(Arena *arena, RDI_Arch arch, U64 reg_code)
     default:
     case RDI_Arch_NULL: {result = push_str8f(arena, "??? (%llu)", reg_code);}break;
     case RDI_Arch_X64:  {result = rdi_string_from_reg_code_x64(reg_code);}break;
+    case RDI_Arch_Arm64:  {result = rdi_string_from_reg_code_arm64(reg_code);}break;
   }
   return result;
 }

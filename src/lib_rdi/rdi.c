@@ -285,6 +285,7 @@ switch(arch)
 {
 default:{}break;
 case RDI_Arch_X64:{result = 8;}break;
+case RDI_Arch_Arm64:{result = 8;}break;
 }
 return result;
 }

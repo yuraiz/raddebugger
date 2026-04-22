@@ -56,12 +56,12 @@ d2r2_convert(Arena *arena, D2R2_ConvertParams *params)
     switch(arch)
     {
       case Arch_Null:
-      case Arch_arm64:
       case Arch_arm32:
       case Arch_COUNT:
       {}break;
       case Arch_x64:{arch_rdi = RDI_Arch_X64;}break;
       case Arch_x86:{arch_rdi = RDI_Arch_X86;}break;
+      case Arch_arm64:{arch_rdi = RDI_Arch_Arm64;}break;
     }
     
     // rjf: fill
