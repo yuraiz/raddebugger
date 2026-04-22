@@ -240,7 +240,6 @@ REGS_RegCodeARM64_fp,
 REGS_RegCodeARM64_lr,
 REGS_RegCodeARM64_sp,
 REGS_RegCodeARM64_pc,
-REGS_RegCodeARM64_cpsr,
 REGS_RegCodeARM64_v0,
 REGS_RegCodeARM64_v1,
 REGS_RegCodeARM64_v2,
@@ -273,73 +272,13 @@ REGS_RegCodeARM64_v28,
 REGS_RegCodeARM64_v29,
 REGS_RegCodeARM64_v30,
 REGS_RegCodeARM64_v31,
-REGS_RegCodeARM64_fpsr,
-REGS_RegCodeARM64_fpcr,
-REGS_RegCodeARM64_bvr0,
-REGS_RegCodeARM64_bvr1,
-REGS_RegCodeARM64_bvr2,
-REGS_RegCodeARM64_bvr3,
-REGS_RegCodeARM64_bvr4,
-REGS_RegCodeARM64_bvr5,
-REGS_RegCodeARM64_bvr6,
-REGS_RegCodeARM64_bvr7,
-REGS_RegCodeARM64_bvr8,
-REGS_RegCodeARM64_bvr9,
-REGS_RegCodeARM64_bvr10,
-REGS_RegCodeARM64_bvr11,
-REGS_RegCodeARM64_bvr12,
-REGS_RegCodeARM64_bvr13,
-REGS_RegCodeARM64_bvr14,
-REGS_RegCodeARM64_bvr15,
-REGS_RegCodeARM64_bcr0,
-REGS_RegCodeARM64_bcr1,
-REGS_RegCodeARM64_bcr2,
-REGS_RegCodeARM64_bcr3,
-REGS_RegCodeARM64_bcr4,
-REGS_RegCodeARM64_bcr5,
-REGS_RegCodeARM64_bcr6,
-REGS_RegCodeARM64_bcr7,
-REGS_RegCodeARM64_bcr8,
-REGS_RegCodeARM64_bcr9,
-REGS_RegCodeARM64_bcr10,
-REGS_RegCodeARM64_bcr11,
-REGS_RegCodeARM64_bcr12,
-REGS_RegCodeARM64_bcr13,
-REGS_RegCodeARM64_bcr14,
-REGS_RegCodeARM64_bcr15,
-REGS_RegCodeARM64_wvr0,
-REGS_RegCodeARM64_wvr1,
-REGS_RegCodeARM64_wvr2,
-REGS_RegCodeARM64_wvr3,
-REGS_RegCodeARM64_wvr4,
-REGS_RegCodeARM64_wvr5,
-REGS_RegCodeARM64_wvr6,
-REGS_RegCodeARM64_wvr7,
-REGS_RegCodeARM64_wvr8,
-REGS_RegCodeARM64_wvr9,
-REGS_RegCodeARM64_wvr10,
-REGS_RegCodeARM64_wvr11,
-REGS_RegCodeARM64_wvr12,
-REGS_RegCodeARM64_wvr13,
-REGS_RegCodeARM64_wvr14,
-REGS_RegCodeARM64_wvr15,
-REGS_RegCodeARM64_wcr0,
-REGS_RegCodeARM64_wcr1,
-REGS_RegCodeARM64_wcr2,
-REGS_RegCodeARM64_wcr3,
-REGS_RegCodeARM64_wcr4,
-REGS_RegCodeARM64_wcr5,
-REGS_RegCodeARM64_wcr6,
-REGS_RegCodeARM64_wcr7,
-REGS_RegCodeARM64_wcr8,
-REGS_RegCodeARM64_wcr9,
-REGS_RegCodeARM64_wcr10,
-REGS_RegCodeARM64_wcr11,
-REGS_RegCodeARM64_wcr12,
-REGS_RegCodeARM64_wcr13,
-REGS_RegCodeARM64_wcr14,
-REGS_RegCodeARM64_wcr15,
-REGS_RegCodeARM64_mdscr_el1,
+REGS_RegCodeARM64_elr_mode,
+REGS_RegCodeARM64_ra_sign_state,
+REGS_RegCodeARM64_tpidrro_elo,
+REGS_RegCodeARM64_tpidr_elo,
+REGS_RegCodeARM64_tpidr_el1,
+REGS_RegCodeARM64_tpidr_el2,
+REGS_RegCodeARM64_tpidr_el3,
 REGS_RegCodeARM64_COUNT,
 } REGS_RegCodeARM64;
 
@@ -485,7 +424,6 @@ REGS_Reg64 fp;
 REGS_Reg64 lr;
 REGS_Reg64 sp;
 REGS_Reg64 pc;
-REGS_Reg32 cpsr;
 REGS_Reg128 v0;
 REGS_Reg128 v1;
 REGS_Reg128 v2;
@@ -518,73 +456,13 @@ REGS_Reg128 v28;
 REGS_Reg128 v29;
 REGS_Reg128 v30;
 REGS_Reg128 v31;
-REGS_Reg32 fpsr;
-REGS_Reg32 fpcr;
-REGS_Reg32 bvr0;
-REGS_Reg32 bvr1;
-REGS_Reg32 bvr2;
-REGS_Reg32 bvr3;
-REGS_Reg32 bvr4;
-REGS_Reg32 bvr5;
-REGS_Reg32 bvr6;
-REGS_Reg32 bvr7;
-REGS_Reg32 bvr8;
-REGS_Reg32 bvr9;
-REGS_Reg32 bvr10;
-REGS_Reg32 bvr11;
-REGS_Reg32 bvr12;
-REGS_Reg32 bvr13;
-REGS_Reg32 bvr14;
-REGS_Reg32 bvr15;
-REGS_Reg32 bcr0;
-REGS_Reg32 bcr1;
-REGS_Reg32 bcr2;
-REGS_Reg32 bcr3;
-REGS_Reg32 bcr4;
-REGS_Reg32 bcr5;
-REGS_Reg32 bcr6;
-REGS_Reg32 bcr7;
-REGS_Reg32 bcr8;
-REGS_Reg32 bcr9;
-REGS_Reg32 bcr10;
-REGS_Reg32 bcr11;
-REGS_Reg32 bcr12;
-REGS_Reg32 bcr13;
-REGS_Reg32 bcr14;
-REGS_Reg32 bcr15;
-REGS_Reg32 wvr0;
-REGS_Reg32 wvr1;
-REGS_Reg32 wvr2;
-REGS_Reg32 wvr3;
-REGS_Reg32 wvr4;
-REGS_Reg32 wvr5;
-REGS_Reg32 wvr6;
-REGS_Reg32 wvr7;
-REGS_Reg32 wvr8;
-REGS_Reg32 wvr9;
-REGS_Reg32 wvr10;
-REGS_Reg32 wvr11;
-REGS_Reg32 wvr12;
-REGS_Reg32 wvr13;
-REGS_Reg32 wvr14;
-REGS_Reg32 wvr15;
-REGS_Reg32 wcr0;
-REGS_Reg32 wcr1;
-REGS_Reg32 wcr2;
-REGS_Reg32 wcr3;
-REGS_Reg32 wcr4;
-REGS_Reg32 wcr5;
-REGS_Reg32 wcr6;
-REGS_Reg32 wcr7;
-REGS_Reg32 wcr8;
-REGS_Reg32 wcr9;
-REGS_Reg32 wcr10;
-REGS_Reg32 wcr11;
-REGS_Reg32 wcr12;
-REGS_Reg32 wcr13;
-REGS_Reg32 wcr14;
-REGS_Reg32 wcr15;
-REGS_Reg64 mdscr_el1;
+REGS_Reg64 elr_mode;
+REGS_Reg64 ra_sign_state;
+REGS_Reg64 tpidrro_elo;
+REGS_Reg64 tpidr_elo;
+REGS_Reg64 tpidr_el1;
+REGS_Reg64 tpidr_el2;
+REGS_Reg64 tpidr_el3;
 };
 
 C_LINKAGE_BEGIN
@@ -594,11 +472,11 @@ extern String8 regs_g_reg_code_x64_string_table[93];
 extern String8 regs_g_alias_code_x64_string_table[95];
 extern REGS_Rng regs_g_reg_code_x64_rng_table[93];
 extern REGS_Slice regs_g_alias_code_x64_slice_table[95];
-extern REGS_UsageKind regs_g_reg_code_arm64_usage_kind_table[134];
+extern REGS_UsageKind regs_g_reg_code_arm64_usage_kind_table[73];
 extern REGS_UsageKind regs_g_alias_code_arm64_usage_kind_table[4];
-extern String8 regs_g_reg_code_arm64_string_table[134];
+extern String8 regs_g_reg_code_arm64_string_table[73];
 extern String8 regs_g_alias_code_arm64_string_table[4];
-extern REGS_Rng regs_g_reg_code_arm64_rng_table[134];
+extern REGS_Rng regs_g_reg_code_arm64_rng_table[73];
 extern REGS_Slice regs_g_alias_code_arm64_slice_table[4];
 
 C_LINKAGE_END

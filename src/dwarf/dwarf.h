@@ -1768,8 +1768,8 @@ typedef enum DW_ExprOpEnum
   X(X26,              26,    x26,           0,  8) \
   X(X27,              27,    x27,           0,  8) \
   X(X28,              28,    x28,           0,  8) \
-  X(X29,              29,    x29,           0,  8) \
-  X(X30,              30,    x30,           0,  8) \
+  X(X29,              29,    fp,            0,  8) \
+  X(X30,              30,    lr,            0,  8) \
   X(SP,               31,    sp,            0,  8) \
   X(PC,               32,    pc,            0,  8) \
   X(ELR_mode,         33,    elr_mode,      0,  8) \

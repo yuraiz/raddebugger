@@ -274,8 +274,8 @@ RDI_RegCodeArm64_x25        = 26,
 RDI_RegCodeArm64_x26        = 27,
 RDI_RegCodeArm64_x27        = 28,
 RDI_RegCodeArm64_x28        = 29,
-RDI_RegCodeArm64_x29        = 30,
-RDI_RegCodeArm64_x30        = 31,
+RDI_RegCodeArm64_fp         = 30,
+RDI_RegCodeArm64_lr         = 31,
 RDI_RegCodeArm64_sp         = 32,
 RDI_RegCodeArm64_pc         = 33,
 RDI_RegCodeArm64_elr_mode   = 34,
@@ -785,8 +785,8 @@ X(x25, 26)\
 X(x26, 27)\
 X(x27, 28)\
 X(x28, 29)\
-X(x29, 30)\
-X(x30, 31)\
+X(fp, 30)\
+X(lr, 31)\
 X(sp, 32)\
 X(pc, 33)\
 X(elr_mode, 34)\

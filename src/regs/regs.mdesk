@@ -240,7 +240,6 @@ REGS_RegTableARM64:
   {lr                             64   Normal} // Link register
   {sp                             64   Normal} // Stack pointer
   {pc                             64   Normal} // Program counter
-  {cpsr                           32   Normal} // Current program status register
   // Vector registers
   {v0                             128  Vector}
   {v1                             128  Vector}
@@ -274,74 +273,13 @@ REGS_RegTableARM64:
   {v29                            128  Vector}
   {v30                            128  Vector}
   {v31                            128  Vector}
-  {fpsr                            32  Normal}
-  {fpcr                            32  Normal}
-  // Debug Registers
-  {bvr0                             32   Normal}
-  {bvr1                             32   Normal}
-  {bvr2                             32   Normal}
-  {bvr3                             32   Normal}
-  {bvr4                             32   Normal}
-  {bvr5                             32   Normal}
-  {bvr6                             32   Normal}
-  {bvr7                             32   Normal}
-  {bvr8                             32   Normal}
-  {bvr9                             32   Normal}
-  {bvr10                            32   Normal}
-  {bvr11                            32   Normal}
-  {bvr12                            32   Normal}
-  {bvr13                            32   Normal}
-  {bvr14                            32   Normal}
-  {bvr15                            32   Normal}
-  {bcr0                             32   Normal}
-  {bcr1                             32   Normal}
-  {bcr2                             32   Normal}
-  {bcr3                             32   Normal}
-  {bcr4                             32   Normal}
-  {bcr5                             32   Normal}
-  {bcr6                             32   Normal}
-  {bcr7                             32   Normal}
-  {bcr8                             32   Normal}
-  {bcr9                             32   Normal}
-  {bcr10                            32   Normal}
-  {bcr11                            32   Normal}
-  {bcr12                            32   Normal}
-  {bcr13                            32   Normal}
-  {bcr14                            32   Normal}
-  {bcr15                            32   Normal}
-  {wvr0                             32   Normal}
-  {wvr1                             32   Normal}
-  {wvr2                             32   Normal}
-  {wvr3                             32   Normal}
-  {wvr4                             32   Normal}
-  {wvr5                             32   Normal}
-  {wvr6                             32   Normal}
-  {wvr7                             32   Normal}
-  {wvr8                             32   Normal}
-  {wvr9                             32   Normal}
-  {wvr10                            32   Normal}
-  {wvr11                            32   Normal}
-  {wvr12                            32   Normal}
-  {wvr13                            32   Normal}
-  {wvr14                            32   Normal}
-  {wvr15                            32   Normal}
-  {wcr0                             32   Normal}
-  {wcr1                             32   Normal}
-  {wcr2                             32   Normal}
-  {wcr3                             32   Normal}
-  {wcr4                             32   Normal}
-  {wcr5                             32   Normal}
-  {wcr6                             32   Normal}
-  {wcr7                             32   Normal}
-  {wcr8                             32   Normal}
-  {wcr9                             32   Normal}
-  {wcr10                            32   Normal}
-  {wcr11                            32   Normal}
-  {wcr12                            32   Normal}
-  {wcr13                            32   Normal}
-  {wcr14                            32   Normal}
-  {wcr15                            32   Normal}
-  {mdscr_el1                        64   Normal} // Bit 0 is SS (Hardware Single Step)
+  {elr_mode                        64  Normal}
+  {ra_sign_state                   64  Normal}
+  {tpidrro_elo                     64  Normal}
+  {tpidr_elo                       64  Normal}
+  {tpidr_el1                       64  Normal}
+  {tpidr_el2                       64  Normal}
+  {tpidr_el3                       64  Normal}
 }
 
 @table(name base off size usage)

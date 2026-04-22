@@ -444,8 +444,8 @@ RDI_RegCodeArm64Table:
   {x26             27}
   {x27             28}
   {x28             29}
-  {x29             30}
-  {x30             31}
+  {fp              30}
+  {lr              31}
   {sp              32}
   {pc              33}
   {elr_mode        34}

@@ -20,6 +20,14 @@
           @expand(REGS_RegTableX64 a) `case REGS_RegCodeX64_$(a.name):{result = RDI_RegCodeX64_$(a.name);}break;`;
           `}`;
         `}break;`;
+      `case Arch_arm64:`;
+      `{`
+        `switch(code)`
+          `{`
+          `default:{}break;`;
+          @expand(REGS_RegTableARM64 a) `case REGS_RegCodeARM64_$(a.name):{result = RDI_RegCodeArm64_$(a.name);}break;`;
+          `}`
+        `}break;`
       `case Arch_x86:`;
       `{`;
         `NotImplemented;`
@@ -45,6 +53,14 @@
           @expand(REGS_RegTableX64 a) `case RDI_RegCodeX64_$(a.name):{result = REGS_RegCodeX64_$(a.name);}break;`;
           `}`;
         `}break;`;
+      `case Arch_arm64:`;
+      `{`
+        `switch(code)`
+          `{`
+          `default:{}break;`;
+          @expand(REGS_RegTableARM64 a) `case RDI_RegCodeArm64_$(a.name):{result = REGS_RegCodeARM64_$(a.name);}break;`;
+          `}`
+        `}break;`
       `case Arch_x86:`;
       `{`;
         `NotImplemented;`
