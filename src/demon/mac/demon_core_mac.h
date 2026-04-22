@@ -126,6 +126,8 @@ typedef struct DMN_MAC_Thread
   DMN_MAC_ThreadState     state;
   struct DMN_MAC_Process *process;
   void                   *reg_block;
+  // TODO(yuraiz): I would put it in reg_block, but it isn't in debug info
+  U64                     reg_mdscr_el1;
   B32                     is_reg_block_dirty;
   B32                     pass_through_signal;
   U64                     pass_through_signo;

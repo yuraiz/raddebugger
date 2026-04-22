@@ -197,10 +197,9 @@ dmn_mac_set_single_step_flag(DMN_MAC_Thread *thread, B32 is_on)
     } break;
     case Arch_arm64:
     {
-      REGS_RegBlockARM64 *reg_block = thread->reg_block;
       // Set SS (Single Stepping) bit
-      if(is_on) { reg_block->mdscr_el1.u64 |= 0x1;    }
-      else      { reg_block->mdscr_el1.u64 |= ~(0x1); }
+      if(is_on) { thread->reg_mdscr_el1 |= 0x1;    }
+      else      { thread->reg_mdscr_el1 |= ~(0x1); }
       thread->is_reg_block_dirty = 1;
       is_flag_set = 1;
     } break;
@@ -264,22 +263,17 @@ dmn_mac_thread_read_reg_block(DMN_MAC_Thread *thread)
       // count = ARM_EXCEPTION_STATE64_V2_COUNT;
       // thread_get_state(thread->tid, ARM_EXCEPTION_STATE64_V2, (thread_state_t)&exception_state, &count);
 
+      // NOTE(yuraiz): Some of the registers are omitted in reg_block.
+
       MemoryCopy(&reg_block->x0, thread_state.__x, sizeof(thread_state.__x));
       reg_block->fp.u64 = thread_state.__fp;
       reg_block->lr.u64 = thread_state.__lr;
       reg_block->sp.u64 = thread_state.__sp;
       reg_block->pc.u64 = thread_state.__pc;
-      reg_block->cpsr.u32 = thread_state.__cpsr;
 
       MemoryCopy(&reg_block->v0, neon_state.__v, sizeof(neon_state.__v));
-      reg_block->fpsr.u32 = neon_state.__fpsr;
-      reg_block->fpcr.u32 = neon_state.__fpcr;
 
-      MemoryCopy(&reg_block->bvr0, debug_state.__bvr, sizeof(debug_state.__bvr));
-      MemoryCopy(&reg_block->bcr0, debug_state.__bcr, sizeof(debug_state.__bcr));
-      MemoryCopy(&reg_block->wvr0, debug_state.__wvr, sizeof(debug_state.__wvr));
-      MemoryCopy(&reg_block->wcr0, debug_state.__wcr, sizeof(debug_state.__wcr));
-      reg_block->mdscr_el1.u64 = debug_state.__mdscr_el1;
+      thread->reg_mdscr_el1 = debug_state.__mdscr_el1;
 	
       return true;
     } break;
@@ -301,29 +295,29 @@ dmn_mac_thread_write_reg_block(DMN_MAC_Thread *thread)
     {
       REGS_RegBlockARM64 *reg_block = thread->reg_block;
       
+      mach_msg_type_number_t count;
+
       arm_thread_state64_t thread_state = {0};
       arm_neon_state64_t neon_state = {0};
       arm_debug_state64_t debug_state = {0};
+
+      count = ARM_THREAD_STATE64_COUNT;
+      thread_get_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, &count);
+      count = ARM_NEON_STATE64_COUNT;
+      thread_get_state(thread->tid, ARM_NEON_STATE64, (thread_state_t)&neon_state, &count);
+      count = ARM_DEBUG_STATE64_COUNT;
+      thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
 
       MemoryCopy(thread_state.__x, &reg_block->x0, sizeof(thread_state.__x));
       thread_state.__fp = reg_block->fp.u64;
       thread_state.__lr = reg_block->lr.u64;
       thread_state.__sp = reg_block->sp.u64;
       thread_state.__pc = reg_block->pc.u64;
-      thread_state.__cpsr = reg_block->cpsr.u32;
       
       MemoryCopy(neon_state.__v, &reg_block->v0, sizeof(neon_state.__v));
-      neon_state.__fpsr = reg_block->fpsr.u32;
-      neon_state.__fpcr = reg_block->fpcr.u32;
-      
-      MemoryCopy(debug_state.__bvr, &reg_block->bvr0, sizeof(debug_state.__bvr));
-      MemoryCopy(debug_state.__bcr, &reg_block->bcr0, sizeof(debug_state.__bcr));
-      MemoryCopy(debug_state.__wvr, &reg_block->wvr0, sizeof(debug_state.__wvr));
-      MemoryCopy(debug_state.__wcr, &reg_block->wcr0, sizeof(debug_state.__wcr));
-      debug_state.__mdscr_el1 = reg_block->mdscr_el1.u64;
-      
-      mach_msg_type_number_t count;
 
+      debug_state.__mdscr_el1 = thread->reg_mdscr_el1;
+      
       count = ARM_THREAD_STATE64_COUNT;
       thread_set_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, count);
       count = ARM_NEON_STATE64_COUNT;
@@ -1972,11 +1966,11 @@ dmn_arch_from_thread(DMN_Handle thread_handle)
 internal U64
 dmn_stack_base_vaddr_from_thread(DMN_Handle thread_handle)
 {
-  B32 result = 0;
+  U64 result = 0;
   DMN_MAC_Thread *thread = dmn_mac_thread_from_handle(thread_handle);
   if(thread)
   {
-    // TODO(yuraiz): maybe stackaddr is what's actually needed here?;
+    // TODO(yuraiz): maybe stackbottom is what's actually needed here?;
     result = thread->stackaddr;
   }
   return result;
