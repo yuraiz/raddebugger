@@ -234,7 +234,7 @@ dw_reg_size_from_code_arm64(DW_Reg reg_code)
     DW_Regs_Arm64_XList
 #undef X
   }
-  return 0;
+  return max_U64;
 }
 
 internal U64

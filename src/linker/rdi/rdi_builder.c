@@ -23,6 +23,7 @@ rdib_infer_data_model(OperatingSystem os, RDI_Arch arch)
   case OperatingSystem_Mac: {
     switch (arch) {
     case RDI_Arch_X64: data_model = RDIB_DataModel_LP64; break;
+    case RDI_Arch_Arm64: data_model = RDIB_DataModel_LP64; break;
     }
   } break;
   default: InvalidPath;

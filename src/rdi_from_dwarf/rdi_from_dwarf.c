@@ -966,9 +966,12 @@ d2r_bytecode_from_expression(Arena         *arena,
       case DW_ExprOp_BReg30: case DW_ExprOp_BReg31: {
         U64 reg_code_dw = inst->opcode - DW_ExprOp_BReg0;
         S64 reg_off     = inst->operands[0].s64;
-        
-        RDI_RegCode reg_code_rdi = d2r_rdi_reg_code_from_dw_reg(arch, reg_code_dw);
-        rdim_bytecode_push_op(arena, &bc, RDI_EvalOp_RegRead, reg_code_rdi);
+
+        U64         reg_size      = dw_reg_size_from_code(arch, reg_code_dw);
+        U64         reg_pos       = dw_reg_pos_from_code(arch, reg_code_dw);
+        RDI_RegCode reg_code_rdi  = d2r_rdi_reg_code_from_dw_reg(arch, reg_code_dw);
+        U32         regread_param = RDI_EncodeRegReadParam(reg_code_rdi, reg_size, reg_pos);
+        rdim_bytecode_push_op(arena, &bc, RDI_EvalOp_RegRead, regread_param);
         if (reg_off > 0) {
           rdim_bytecode_push_sconst(arena, &bc, reg_off);
           rdim_bytecode_push_op(arena, &bc, RDI_EvalOp_Add, RDI_EvalTypeGroup_S);
