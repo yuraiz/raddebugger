@@ -504,7 +504,7 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
   Temp scratch = scratch_begin(0, 0);
   DMN_MAC_Module *module = &dmn_mac_entity_alloc(DMN_MAC_EntityKind_Module)->module;
 
-  // TODO(yuraz): I guess we can read more useful info from here
+  // TODO(yuraiz): I guess we can read more useful info from here
   MACH_Bin info = mach_extract_file_info(scratch.arena, load_address, dmn_mac_mach_read_op_mem, process->task);
   
   DLLPushBack(process->ctx->first_module, process->ctx->last_module, module);
@@ -529,17 +529,7 @@ dmn_mac_process_ctx_alloc(DMN_MAC_Process *process, B32 is_rebased)
 
   ctx->arena             = arena_alloc();
   ctx->arch              = Arch_arm64;
-  // ctx->rdebug_vaddr      = rdebug_vaddr;
-  // ctx->dl_class          = dl_class;
   ctx->loaded_modules_ht = hash_table_init(ctx->arena, 0x1000);
-  // ctx->probes            = known_probes;
-  
-  // TODO(yuraiz)
-  // // create main module
-  // DMN_MAC_Module *main_module = dmn_mac_module_alloc(ctx, process->fd, base_vaddr, auxv.execfn, 1, 1);
-  
-  // // glibc has a shortcut mapping for the main module
-  // hash_table_push_u64_raw(ctx->arena, ctx->loaded_modules_ht, 0, main_module);
   
   return ctx;
 }
@@ -1065,31 +1055,13 @@ dmn_mac_event_create_process(Arena *arena, DMN_EventList *events, pid_t pid, DMN
   }
   else
   {
-    // TODO(yuraiz)
     process->ctx = dmn_mac_process_ctx_alloc(process, !!(flags & DMN_MAC_CreateProcessFlag_Rebased));
   }
   process->ctx->ref_count += 1;
-  
-  // install probes in a process that does not have a cloned memory
-  if(!(flags & DMN_MAC_CreateProcessFlag_ClonedMemory))
-  {
-    // TODO(yuraiz)
-    // dmn_mac_process_trap_probes(process);
-  }
-  
+    
   // push events
   dmn_mac_push_event_create_process(arena, events, process);
-  for EachNode(thread, DMN_MAC_Thread, process->first_thread)
-  {
-    dmn_mac_push_event_create_thread(arena, events, thread);
-  }
 
-  // TODO(yuraiz): Pushing a single module, in a different place
- 
-  for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
-  {
-    dmn_mac_push_event_load_module(arena, events, process, module);
-  }
   dmn_mac_push_event_handshake_complete(arena, events, process);
   
   return process;
