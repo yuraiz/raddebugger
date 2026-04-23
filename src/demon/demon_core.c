@@ -228,7 +228,8 @@ dmn_set_trap(Arena *arena, DMN_Trap *trap)
   U8 *swap_bytes = push_array(arena, U8, trap_inst.size);
   if(dmn_process_read(trap->process, r1u64(trap->vaddr, trap->vaddr + trap_inst.size), swap_bytes) == trap_inst.size)
   {
-    if(dmn_process_write(trap->process, r1u64(trap->vaddr, trap->vaddr + trap_inst.size), trap_inst.str) == trap_inst.size)
+    // NOTE(yuraiz): Initially the check was `== trap_inst.size`, but since the type is B32 I assume that's a mistake.
+    if(dmn_process_write(trap->process, r1u64(trap->vaddr, trap->vaddr + trap_inst.size), trap_inst.str))
     {
       result = push_array(arena, DMN_ActiveTrap, 1);
       result->trap       = trap;

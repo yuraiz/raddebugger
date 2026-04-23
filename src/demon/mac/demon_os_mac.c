@@ -144,7 +144,7 @@ catch_mach_exception_raise(
 						(caddr_t)(uintptr_t)thread,
 						code[2]);
 	} else {
-		printf("Got exception %s (code: %llu subcode: %llu)\n",
+		printf("Got exception %s (code: %llu subcode: %p)\n",
 			exc_type_to_string(result.exception), 
 			result.code,
 			result.subcode
