@@ -246,8 +246,6 @@ typedef struct DMN_MAC_ProcessCtx
 {
   Arena                 *arena;
   Arch                   arch;
-  U64                    rdebug_vaddr;
-  ELF_Class              dl_class;
   HashTable             *loaded_modules_ht;
   DMN_MAC_Probe        **probes;
   DMN_ActiveTrap        *first_probe_trap;
