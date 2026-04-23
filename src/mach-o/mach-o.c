@@ -9,6 +9,7 @@
 #undef internal 
 #include <mach-o/dyld_images.h>
 #include <mach-o/dyld.h>
+#include <mach-o/nlist.h>
 #define internal static
 
 #include <CoreFoundation/CFURL.h>

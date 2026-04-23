@@ -11,47 +11,6 @@
 ////////////////////////////////
 //~ Helpers
 
-internal DMN_MAC_ImageArray
-dmn_mac_read_dyld_images(Arena *arena, DMN_MAC_Process *process)
-{
-  DMN_MAC_ImageArray result = {0};
-
-  struct task_dyld_info info;
-  mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
-  kern_return_t status_code = task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
-  if(status_code != 0)
-  {
-    if(status_code != MACH_SEND_INVALID_DEST)
-    {
-      fprintf(stderr, "Failed to read task dyld info: %s\n", mach_error_string(status_code));
-    }
-    return result;
-  }
-  Assert(info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_64);
-
-  struct dyld_all_image_infos all_image_infos;
-  mach_vm_size_t readCount = 0;
-  status_code = mach_vm_read_overwrite(process->task, info.all_image_info_addr, sizeof(all_image_infos),  (mach_vm_address_t)&all_image_infos, &readCount);
-  if(status_code != 0)
-  {
-    fprintf(stderr, "Failed to read task dyld all image info info\n");
-  }
-
-  struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, all_image_infos.infoArrayCount);
-  mach_vm_size_t array_size = sizeof(struct dyld_image_info) * all_image_infos.infoArrayCount;
-  readCount = 0;
-  status_code = mach_vm_read_overwrite(process->task, (mach_vm_address_t)all_image_infos.infoArray, array_size, (mach_vm_address_t)image_info_array, &readCount);
-  if(status_code != 0)
-  {
-    fprintf(stderr, "Failed to read task dyld image info array: %s\n", mach_error_string(status_code));
-  }
-
-  result.count = all_image_infos.infoArrayCount;
-  result.items = image_info_array;
-
-  return result;
-}
-
 internal B32
 dmn_mac_write_to_protected(
     const task_t task,
@@ -70,7 +29,10 @@ dmn_mac_write_to_protected(
 
     mach_vm_address_t region_address = address;
     mach_vm_size_t region_size = (mach_vm_size_t)size;
-    mach_vm_region(
+
+    kern_return_t kr = 0;
+
+    kr = mach_vm_region(
         task,
         &region_address,
         &region_size,
@@ -79,6 +41,10 @@ dmn_mac_write_to_protected(
         &region_info_size,
         &object_name
     );
+    if(kr != 0)
+    {
+      printf("failed to query memory region %p..%p: %s\n", address, address + size, mach_error_string(kr));
+    }
 
     const vm_prot_t old_protection = region_info->protection;
 
@@ -100,13 +66,18 @@ dmn_mac_write_to_protected(
             new_protection = (old_protection | VM_PROT_WRITE);
         }
 
-        mach_vm_protect(
+        kr = mach_vm_protect(
             task,
             region_address,
             region_size,
             false,
             new_protection | VM_PROT_COPY
         );
+        if(kr != 0)
+        {
+          printf("%x -> %x (max: %x)\n", old_protection, new_protection, region_info->max_protection);
+          printf("failed change protection %p..%p: %s\n", region_address, region_address + region_size, mach_error_string(kr));
+        }
     }
 
     kern_return_t status_code = mach_vm_write(
@@ -198,8 +169,8 @@ dmn_mac_set_single_step_flag(DMN_MAC_Thread *thread, B32 is_on)
     case Arch_arm64:
     {
       // Set SS (Single Stepping) bit
-      if(is_on) { thread->reg_mdscr_el1 |= 0x1;    }
-      else      { thread->reg_mdscr_el1 |= ~(0x1); }
+      if(is_on) { thread->debug_regs.mdscr_el1 |= 0x1;    }
+      else      { thread->debug_regs.mdscr_el1 |= ~(0x1); }
       thread->is_reg_block_dirty = 1;
       is_flag_set = 1;
     } break;
@@ -273,7 +244,7 @@ dmn_mac_thread_read_reg_block(DMN_MAC_Thread *thread)
 
       MemoryCopy(&reg_block->v0, neon_state.__v, sizeof(neon_state.__v));
 
-      thread->reg_mdscr_el1 = debug_state.__mdscr_el1;
+      MemoryCopy(&thread->debug_regs, &debug_state, sizeof(debug_state));
 	
       return true;
     } break;
@@ -316,7 +287,7 @@ dmn_mac_thread_write_reg_block(DMN_MAC_Thread *thread)
       
       MemoryCopy(neon_state.__v, &reg_block->v0, sizeof(neon_state.__v));
 
-      debug_state.__mdscr_el1 = thread->reg_mdscr_el1;
+      MemoryCopy(&debug_state, &thread->debug_regs, sizeof(debug_state));
       
       count = ARM_THREAD_STATE64_COUNT;
       thread_set_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, count);
@@ -360,7 +331,7 @@ dmn_mac_process_write(DMN_MAC_Process* process, Rng1U64 range, void *src)
     U64 to_write = dim_1u64(range);
     result = dmn_mac_write_to_protected(process->task, range.min, src, to_write, true);
   }
-  return 0;
+  return result != 0;
 }
 
 internal
@@ -384,6 +355,91 @@ dmn_mac_mach_read_op_mem(U64 address, U64 size, void* dst, U64 src)
   U64 read_size = 0;
   mach_vm_read_overwrite(src, address, size, (mach_vm_address_t)dst, &read_size);
   return read_size == size;
+}
+
+internal U64
+dmn_mac_get_initial_dyld_notifier(DMN_MAC_Process *process)
+{
+  //////////////////////////////
+  // NOTE(yuraiz): When the process just exec-ed, the info we get with task_dyld_info is invalid yet.
+  // So to get the notifier and set a breakpoint on it we must:
+  // - Find the dyld image in the process memory.
+  // - Find _lldb_image_notifier symbol in the image.
+  // 
+  // After some time the notifier is called with an argument dyld_image_dyld_moved,
+  // and it should be replaced with the one from task_dyld_info.
+
+  Temp scratch = scratch_begin(0, 0);
+
+  mach_port_t object_name = MACH_PORT_NULL;
+  mach_msg_type_number_t region_info_size = VM_REGION_BASIC_INFO_COUNT_64;
+
+  vm_region_basic_info_data_64_t region_info = {0};
+
+  mach_vm_address_t address = 0;
+  mach_vm_size_t size = 0;
+
+  //- yuraiz: check memory regions in order
+  while(1)
+  {
+    mach_vm_region(process->task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&region_info, &region_info_size, &object_name);
+
+    mach_vm_size_t read_count = 0;
+
+    struct mach_header_64 maybe_mach_header = {0};
+
+    mach_vm_read_overwrite(process->task, address, sizeof(struct mach_header_64),  (mach_vm_address_t)&maybe_mach_header, &read_count);
+
+    //- yuraiz: check if that the dyld image header
+    if(maybe_mach_header.magic == MH_MAGIC_64 && maybe_mach_header.filetype == MH_DYLINKER)
+    {
+      MACH_Bin info = mach_extract_file_info(scratch.arena, address, dmn_mac_mach_read_op_mem, process->task);
+
+      //- yuraiz: iterate over the image commands
+      U8 *command_buf = info.buf;
+      for EachIndex(i, info.command_count)
+      {
+        struct load_command *ld_cmd = (struct load_command *)command_buf;
+        //- yuraiz: we're interested in the symbols
+        if(ld_cmd->cmd == LC_SYMTAB)
+        {
+          struct symtab_command *command = (struct symtab_command*)ld_cmd;
+
+          mach_vm_address_t sym_addr = address + command->symoff;
+          mach_vm_size_t sym_size = sizeof(struct nlist_64) * command->nsyms;
+          struct nlist_64 *syms = push_array(scratch.arena, struct nlist_64, command->nsyms);
+          mach_vm_read_overwrite(process->task, sym_addr, sym_size, (mach_vm_address_t)syms, &read_count);
+          
+          mach_vm_address_t str_addr = address + command->stroff;
+          mach_vm_size_t str_size = command->strsize;
+          char *strdata = push_array(scratch.arena, char, command->strsize);
+          mach_vm_read_overwrite(process->task, str_addr, str_size, (mach_vm_address_t)strdata, &read_count);
+
+          //- yuraiz: search the symbols for _lldb_image_notifier
+          for EachIndex(i, command->nsyms)
+          {
+            U32 strx = syms[i].n_un.n_strx;
+            if(strx != 0)
+            {
+              String8 string = str8_cstring(strdata + strx);
+              String8 prefix = str8_lit("_lldb_image_notifier");
+              if(str8_match(string, prefix, 0))
+              {
+                scratch_end(scratch);
+                U64 point = address + syms[i].n_value;
+                return point;
+              }
+            }
+          }
+        }
+        command_buf += ld_cmd->cmdsize;
+      }
+    }
+
+    address += size;
+  }
+
+  Assert(0 && "Failed to find the dyld image");
 }
 
 internal DMN_MAC_Entity *
@@ -458,6 +514,7 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
   // but in other's it should be just load_address.
   // That offset ctrl_thread__module_open magic detection, but is required for the correct symbol mapping.
   module->base_vaddr = load_address - mach_compute_image_offset(info); 
+  module->load_vaddr = load_address; 
   module->name_vaddr = name_vaddr;
   module->size       = mach_compute_image_size(info);
   
@@ -468,54 +525,8 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
 internal DMN_MAC_ProcessCtx *
 dmn_mac_process_ctx_alloc(DMN_MAC_Process *process, B32 is_rebased)
 {
-  // DMN_MAC_ProcessCtx *ctx = &dmn_mac_entity_alloc(DMN_MAC_EntityKind_ProcessCtx)->process_ctx;
-  
-//   ELF_Hdr64     exe_ehdr     = dmn_mac_ehdr_from_pid(process->pid);
-//   DMN_MAC_Auxv  auxv         = dmn_mac_auxv_from_pid(process->pid, exe_ehdr.e_ident[ELF_Identifier_Class]);
-//   Arch          arch         = arch_from_elf_machine(exe_ehdr.e_machine);
-//   U64           rdebug_vaddr = dmn_mac_rdebug_vaddr_from_memory(process->fd, auxv.base, is_rebased);
-//   U64           base_vaddr   = (auxv.phdr & ~(auxv.pagesz-1));
-//   U64           rebase       = exe_ehdr.e_type == ELF_Type_Dyn ? base_vaddr : 0;
-//   Rng1U64       image_vrange = dmn_mac_compute_image_vrange(process->fd, exe_ehdr.e_ident[ELF_Identifier_Class], rebase, auxv.phdr, auxv.phent, auxv.phnum);
-//   Arena        *ctx_arena    = arena_alloc();
-  
-//   ELF_Class dl_class;
-//   {
-//     ELF_Hdr64 ehdr = {0};
-//     if(elf_read_ehdr(dmn_mac_machine_op_mem_read, &process->fd, auxv.base, &ehdr) != MachineOpResult_Ok) { Assert(0 && "failed to read interp's header"); }
-//     dl_class = ehdr.e_ident[ELF_Identifier_Class];
-//   }
-  
-//   // gather probes
-//   DMN_MAC_Probe **known_probes = push_array(ctx_arena, DMN_MAC_Probe *, DMN_MAC_ProbeType_Count);
-//   {
-//     Temp scratch = scratch_begin(0, 0);
-    
-//     String8 dl_path = dmn_mac_dl_path_from_pid(scratch.arena, process->pid, auxv.base);
-//     int dl_fd = OS_LNX_RETRY_ON_EINTR(open((char *)dl_path.str, O_RDONLY));
-    
-//     DMN_MAC_ProbeList probes = {0};
-//     if(dl_fd >= 0)
-//     {
-//       probes = dmn_mac_read_probes(ctx_arena, dl_fd, 0, auxv.base);
-//       OS_LNX_RETRY_ON_EINTR(close(dl_fd));
-//     }
-    
-//     for EachNode(n, DMN_MAC_ProbeNode, probes.first)
-//     {
-//       DMN_MAC_Probe *p = &n->v;
-//       if(str8_match(p->provider, str8_lit("rtld"), 0))
-//       {
-// #define X(_N,_A,_S) if(str8_match(p->name, str8_lit(_S), 0)) { AssertAlways(p->args.count == _A); known_probes[DMN_MAC_ProbeType_##_N] = p; continue ; }
-//         DMN_MAC_Probe_XList
-// #undef X
-//       }
-//     }
-    
-//     scratch_end(scratch);
-//   }
-  
   DMN_MAC_ProcessCtx *ctx = &dmn_mac_entity_alloc(DMN_MAC_EntityKind_ProcessCtx)->process_ctx;
+
   ctx->arena             = arena_alloc();
   ctx->arch              = Arch_arm64;
   // ctx->rdebug_vaddr      = rdebug_vaddr;
@@ -531,6 +542,48 @@ dmn_mac_process_ctx_alloc(DMN_MAC_Process *process, B32 is_rebased)
   // hash_table_push_u64_raw(ctx->arena, ctx->loaded_modules_ht, 0, main_module);
   
   return ctx;
+}
+
+internal B32
+dmn_mac_hardware_breakpoint(DMN_MAC_Thread *thread, U8 id, U64 address, B32 enable, B32 single_step)
+{
+  mach_msg_type_number_t count;
+  arm_debug_state64_t debug_state = {0};
+  count = ARM_DEBUG_STATE64_COUNT;
+  thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+
+  // Set the breakpoint address.
+  debug_state.__bvr[id] = address;
+  // Enable the breakpoint.
+  debug_state.__bcr[id] = enable ? 0x1e5 : 0;
+
+  B32 was_single_step = debug_state.__mdscr_el1 & 0x1; 
+
+  // Set SS (Single Stepping) bit
+  if(single_step) { debug_state.__mdscr_el1 |= 0x1;    }
+  else            { debug_state.__mdscr_el1 |= ~(0x1); }
+
+  count = ARM_DEBUG_STATE64_COUNT;
+  thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
+
+  return !was_single_step && single_step;
+}
+
+internal void
+dmn_mac_thread_set_probes(DMN_MAC_Thread *thread)
+{
+  // NOTE(yuraiz): Currently we set only a singe trap.
+  Temp scratch = scratch_begin(0, 0);
+
+  if(thread->process->ctx->dyld_notifier_address == 0)
+  {
+    thread->process->ctx->dyld_notifier_address = dmn_mac_get_initial_dyld_notifier(thread->process);
+  }
+  U64 breakpoint_location = thread->process->ctx->dyld_notifier_address;
+
+  dmn_mac_hardware_breakpoint(thread, 0, breakpoint_location, true, false);
+
+  scratch_end(scratch);
 }
 
 internal DMN_MAC_Thread *
@@ -554,6 +607,8 @@ dmn_mac_thread_alloc(DMN_MAC_Process *process, DMN_MAC_ThreadState thread_state,
   thread->state     = thread_state;
   thread->process   = process;
   thread->reg_block = reg_block;
+
+  dmn_mac_thread_set_probes(thread);
 
   // NOTE(yuraiz): It's safe to read the registers even if the thread isn't suspended.
   thread->is_reg_block_dirty = !dmn_mac_thread_read_reg_block(thread);
@@ -1071,6 +1126,170 @@ dmn_mac_event_unload_module(Arena *arena, DMN_EventList *events, DMN_MAC_Process
 {
   dmn_mac_push_event_unload_module(arena, events, process, module);
   dmn_mac_module_release(process->ctx, module);
+}
+
+internal B32
+dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thread *thread, U64 address)
+{
+  Temp scratch = scratch_begin(&arena, 1);
+  B32 result = 0;
+
+  DMN_MAC_Process *process = thread->process;
+  if(address == process->ctx->dyld_notifier_address)
+  {
+    //////////////////////////////
+    // NOTE(yuraiz): On dyld notifier.
+    // 
+    // macOS, unlike Windows, doesn't send any events when modules are loaded or unloaded.
+    // Debuggers discover that by setting a breakpoint on a special dyld_image_notifier function.
+    // 
+    // You can find it in the dyld_all_image_infos.notifier field, but it isn't valid just after the start,
+    // so I search for _lldb_image_notifier using dmn_mac_get_initial_dyld_notifier helper function
+    // and update on dyld_image_dyld_moved notification.
+
+    // disable the breakpoint for a single step
+    thread->clear_single_step = dmn_mac_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, false, true); 
+    thread->hit_hardware_breakpoint = 1;
+
+    dmn_mac_thread_read_reg_block(thread);
+    REGS_RegBlockARM64* reg_block = (REGS_RegBlockARM64*)thread->reg_block;
+
+    // read the arguments of dyld_image_notifier.
+    enum dyld_image_mode mode = reg_block->x0.u32[0];
+    U32 info_count = reg_block->x1.u32[0];
+    U64 info_addr = reg_block->x2.u64;
+
+    mach_vm_size_t read_count = 0;
+
+    switch(mode)
+    {
+      case dyld_image_adding:
+      {
+        struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
+        mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
+
+        mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
+
+        // NOTE(yuraiz): For some reason dyld notifies about the main module multiple times.
+        // Maybe we can compare only with the main module
+
+        // generate load module events
+        for EachIndex(i, info_count)
+        {
+          U64 load_address = (U64)image_info_array[i].imageLoadAddress;
+          U64 name_vaddr   = (U64)image_info_array[i].imageFilePath;
+          B32 exists = 0;
+          for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+          {
+            if(module->load_vaddr == load_address)
+            {
+              exists = 1;
+            }
+          }
+          if(!exists)
+          {
+            dmn_mac_event_load_module(arena, events, process, load_address, name_vaddr);
+          }
+        }
+      }break;
+      case dyld_image_removing:
+      {
+        struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
+        mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
+
+        mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
+
+        // generate unload module events
+        for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+        {
+          for EachIndex(i, info_count)
+          {
+            U64 load_address = (U64)image_info_array[i].imageLoadAddress;
+            if(module->load_vaddr == load_address)
+            {
+              dmn_mac_event_unload_module(arena, events, process, module);
+            }
+          }
+        }
+      }break;
+      case dyld_image_info_change:
+      {        
+        struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
+        mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
+
+        mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
+
+        // generate unload module events
+        for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+        {
+          B32 exists = 0;
+          for EachIndex(i, info_count)
+          {
+            U64 load_address = (U64)image_info_array[i].imageLoadAddress;
+            if(module->load_vaddr == load_address)
+            {
+              exists = 1;
+            }
+          }
+          if(!exists)
+          {
+            dmn_mac_event_unload_module(arena, events, process, module);
+          }
+        }
+
+        // generate load module events
+        for EachIndex(i, info_count)
+        {
+          U64 load_address = (U64)image_info_array[i].imageLoadAddress;
+          U64 name_vaddr   = (U64)image_info_array[i].imageFilePath;
+
+          B32 exists = 0;
+          for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
+          {
+            if(module->load_vaddr == load_address)
+            {
+              exists = 1;
+            }
+          }
+
+          if(!exists)
+          {
+            dmn_mac_event_load_module(arena, events, process, load_address, name_vaddr);
+          }
+        }
+      }break;
+      case dyld_image_dyld_moved:
+      {
+        // dyld moved -> we need to read the new notifier address
+        struct task_dyld_info info = {0};
+        mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
+        task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
+        Assert(info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_64);
+
+        struct dyld_all_image_infos all_image_infos = {0};
+        mach_vm_read_overwrite(process->task, info.all_image_info_addr, sizeof(all_image_infos),  (mach_vm_address_t)&all_image_infos, &read_count);
+
+        process->ctx->dyld_notifier_address = (U64)all_image_infos.notification;
+
+        for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+        {
+          dmn_mac_event_unload_module(arena, events, process, module);
+        }
+      }break;
+    }
+    result = 1;
+  }
+  else if(thread->hit_hardware_breakpoint)
+  {
+    // turn the breakpoint back on and disable single step if needed
+    dmn_mac_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, true, !thread->clear_single_step); 
+    thread->clear_single_step = 0;
+    result = 1;
+  }
+
+  scratch_end(scratch);
+
+  return result;
 }
 
 internal void
@@ -1663,50 +1882,6 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           }
 
           vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
-
-          ////////////////////
-          //- yuraiz: monitor modules
-          //
-          DMN_MAC_ImageArray images = dmn_mac_read_dyld_images(scratch.arena, process);
-
-          // generate unload module events
-          for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
-          {
-            B32 exists = 0;
-            for EachIndex(i, images.count)
-            {
-              U64 load_address = (U64)images.items[i].imageLoadAddress;
-              if(module->base_vaddr == load_address)
-              {
-                exists = 1;
-              }
-            }
-            if(!exists)
-            {
-              dmn_mac_event_unload_module(arena, &events, process, module);
-            }
-          }
-
-          // generate load module events
-          for EachIndex(i, images.count)
-          {
-            U64 load_address = (U64)images.items[i].imageLoadAddress;
-            U64 name_vaddr   = (U64)images.items[i].imageFilePath;
-
-            B32 exists = 0;
-            for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
-            {
-              if(module->base_vaddr == load_address)
-              {
-                exists = 1;
-              }
-            }
-
-            if(!exists)
-            {
-              dmn_mac_event_load_module(arena, &events, process, load_address, name_vaddr);
-            }
-          }
         }
 
         continue;
@@ -1754,7 +1929,6 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
                   process->state = DMN_MAC_ProcessState_WaitForExec;
                   goto wait_for_signal;
                 }
-                else { Assert(0 && "failed to resume tracee"); }
               }
               else { Assert(0 && "unexpected signal"); }
             } break;
@@ -1764,25 +1938,20 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
                  result.code == EXC_SOFT_SIGNAL &&
                  result.subcode == SIGTRAP)
               {
-                if(task_resume(result.task) == 0)
+                DMN_MAC_CreateProcessFlags create_flags = process->debug_subprocesses ? DMN_MAC_CreateProcessFlag_DebugSubprocesses : 0;
+                dmn_mac_process_release(process);
+                process = dmn_mac_event_create_process(arena, &events, pid, 0, create_flags);
+
+                process->state = DMN_MAC_ProcessState_Normal;
+
+                thread_act_array_t threads = NULL;
+                mach_msg_type_number_t threads_len = 0;
+                task_threads(process->task, &threads, &threads_len);
+                for EachIndex(i, threads_len)
                 {
-                  DMN_MAC_CreateProcessFlags create_flags = process->debug_subprocesses ? DMN_MAC_CreateProcessFlag_DebugSubprocesses : 0;
-                  dmn_mac_process_release(process);
-                  process = dmn_mac_event_create_process(arena, &events, pid, 0, create_flags);
-
-                  process->state = DMN_MAC_ProcessState_Normal;
-
-                  thread_act_array_t threads = NULL;
-                  mach_msg_type_number_t threads_len = 0;
-                  task_threads(process->task, &threads, &threads_len);
-                  for EachIndex(i, threads_len)
-                  {
-                    dmn_mac_event_create_thread(arena, &events, process, threads[i]);
-                  }
-
-                  goto wait_for_signal;
+                  dmn_mac_event_create_thread(arena, &events, process, threads[i]);
                 }
-                else { Assert(0 && "failed to resume tracee"); }
+                goto wait_for_signal;
               }
               else { Assert(0 && "unexpected signal"); }
             } break;
@@ -1791,17 +1960,19 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           continue;
         }
       }
-      
-      // TODO(yuriaiz)
 
       if(result.exception == EXC_BREAKPOINT)
       {
-        // TODO(yuraiz): handle different types of breakpoints
-        pid_t pid = 0;
-        pid_for_task(result.task, &pid);
-        DMN_MAC_Thread *thread = dmn_mac_thread_from_pid(pid);
-        dmn_mac_push_event_single_step(arena, &events, thread);
-        break;
+        DMN_MAC_Thread *thread = dmn_mac_thread_from_pid(result.thread);
+        if(!dmn_mac_event_probe_breakpoint(arena, &events, thread, result.subcode))
+        {
+          // TODO(yuraiz): handle different types of breakpoints
+          // DMN_MAC_Thread *thread = dmn_mac_thread_from_pid(result.thread);
+          // dmn_mac_push_event_single_step(arena, &events, thread);
+          // dmn_mac_event_breakpoint(arena, &events, active_trap_first, result.thread);
+          dmn_mac_event_exception(arena, &events, result.thread, 4); // sigtrap for now
+          break;
+        }
       }
       
 

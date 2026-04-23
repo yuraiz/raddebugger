@@ -73,12 +73,6 @@ typedef enum
 ////////////////////////////////
 //~ Process Info
 
-typedef struct DMN_MAC_ImageArray
-{
-  struct dyld_image_info *items;
-  U64 count;
-} DMN_MAC_ImageArray;
-
 typedef struct DMN_MAC_Auxv
 {
   U64 base;
@@ -120,6 +114,16 @@ typedef enum DMN_MAC_ThreadState
   DMN_MAC_ThreadState_PendingCreation,
 } DMN_MAC_ThreadState;
 
+// Matches layout of arm_debug_state64
+typedef struct DMN_MAC_ThreadDebugRegs
+{
+  U64 bvr[16];
+  U64 bcr[16];
+  U64 wvr[16];
+  U64 wcr[16];
+  U64 mdscr_el1;
+} DMN_MAC_ThreadDebugRegs;
+
 typedef struct DMN_MAC_Thread
 {
   thread_act_t            tid;
@@ -127,7 +131,9 @@ typedef struct DMN_MAC_Thread
   struct DMN_MAC_Process *process;
   void                   *reg_block;
   // TODO(yuraiz): I would put it in reg_block, but it isn't in debug info
-  U64                     reg_mdscr_el1;
+  DMN_MAC_ThreadDebugRegs debug_regs;
+  B32                     hit_hardware_breakpoint;
+  B32                     clear_single_step;
   B32                     is_reg_block_dirty;
   B32                     pass_through_signal;
   U64                     pass_through_signo;
@@ -158,6 +164,7 @@ typedef struct DMN_MAC_Module
 {
   U64 name_vaddr;
   U64 base_vaddr;
+  U64 load_vaddr;
   U64 name_space_id;
   U64 size;
   U64 phvaddr;
@@ -245,6 +252,8 @@ typedef struct DMN_MAC_ProcessCtx
   DMN_MAC_Probe        **probes;
   DMN_ActiveTrap        *first_probe_trap;
   DMN_ActiveTrap        *last_probe_trap;
+  // NOTE(we set a trap to that function, and dyld calls it when images are loaded or unloaded)
+  U64                    dyld_notifier_address;
   DMN_MAC_Module        *first_module;
   DMN_MAC_Module        *last_module;
   U64                    module_count;
