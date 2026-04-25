@@ -150,12 +150,42 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
 
         // TODO(yuraiz): Read additional information from the opcode.
         DA64_Opcode opcode = da64_decode(*(U32*)code.str);
-
+        
         da64_fmt_insn_pc(vaddr, opcode, buf, sizeof(buf));
         String8 result = str8_cstring(buf);
+        
+        da64_u64 jump_dest_vaddr = 0;
+        da64_compute_jump_dest_vaddr(vaddr, opcode, &jump_dest_vaddr);
+        
+        DASM_InstFlags flags = 0;
+        DA64_InsnClass insn_class = opcode.definition->class;
+        
+        // NOTE(yuraiz): I'm not really famliar with arm64 assembly, so I most certainly set something incorrectly.
+        switch (insn_class) {
+          case DA64_InsnClass_BRANCH_IMM:
+          case DA64_InsnClass_BRANCH_REG:
+          case DA64_InsnClass_COMPBRANCH:
+          {
+            flags |= DASM_InstFlag_Branch;
+          }break;
+        }
+
+        switch (opcode.mnemonic) {
+          case DA64_Mnemonic_bl:{
+          flags |=DASM_InstFlag_Call;
+          }break;
+          case DA64_Mnemonic_ret:
+          case DA64_Mnemonic_retaa:
+          case DA64_Mnemonic_retab: {
+            flags |= DASM_InstFlag_Return;
+          }break;
+        }
+
         {
-          inst.size   = sizeof(U32);
-          inst.string = str8_copy(arena, result);
+          inst.flags           = flags;
+          inst.size            = sizeof(U32);
+          inst.string          = str8_copy(arena, result);
+          inst.jump_dest_vaddr = jump_dest_vaddr;
         }
       }
     }break;
