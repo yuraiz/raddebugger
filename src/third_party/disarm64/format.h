@@ -3185,7 +3185,69 @@ int da64_format_hint(da64_u64 bits, char* buf, char* buf_end)
 }
 
 ////////////////
+//~ yuraiz: Info computation
+
+da64_u32 da64_compute_operand_jump_dest_vaddr(da64_u64 pc, da64_u32 bits, DA64_InsnOperand* operand, const DA64_Insn* definition, da64_u64* addr)
+{
+    DA64_InsnOperandKind kind = operand->kind;
+
+    // NOTE(yuraiz): Hope I include here every branch address operand
+    switch (kind) {
+    default: {
+        return 0;
+    } break;
+
+    case DA64_InsnOperandKind_ADDR_PCREL14: {
+        da64_u64 offset = da64_bit_range(bits, 5, 14);
+        offset = da64_sign_extend(offset, 13) << 2;
+        *addr = pc + offset;
+    } break;
+    case DA64_InsnOperandKind_ADDR_PCREL19: {
+        da64_u64 offset = da64_bit_range(bits, 5, 19);
+        offset = da64_sign_extend(offset, 18) << 2;
+        *addr = pc + offset;
+    } break;
+    case DA64_InsnOperandKind_ADDR_PCREL21: {
+        da64_u64 offset = (da64_bit_range(bits, 5, 19) << 2) | da64_bit_range(bits, 29, 2);
+        offset = da64_sign_extend(offset, 20);
+        *addr = pc + offset;
+    } break;
+    case DA64_InsnOperandKind_ADDR_ADRP: {
+        da64_u64 offset = (da64_bit_range(bits, 5, 19) << 2) | da64_bit_range(bits, 29, 2);
+        offset = da64_sign_extend(offset, 20) << 12;
+        da64_u64 m_pc = pc & !((1 << 12) - 1);
+        *addr = m_pc + offset;
+    } break;
+    case DA64_InsnOperandKind_ADDR_PCREL26: {
+        da64_u64 offset = da64_bit_range(bits, 0, 26);
+        offset = da64_sign_extend(offset, 25) << 2;
+        *addr = pc + offset;
+    } break;
+    }
+    return 1;
+}
+
+////////////////
 //~ yuraiz: Main function
+
+// Compute jump address for an immediate branch, returns 0 for instructions of different classes.
+da64_u32 da64_compute_jump_dest_vaddr(da64_u64 pc, DA64_Opcode opcode, da64_u64* addr)
+{
+    const DA64_Insn* definition = opcode.definition;
+    da64_u32 bits = opcode.bits;
+
+    if (definition->class & DA64_InsnClass_BRANCH_IMM || definition->class & DA64_InsnClass_COMPBRANCH) {
+        da64_u64 op_count = definition->operand_count;
+        for (da64_u64 i = 0; i < op_count; i++) {
+            DA64_InsnOperand operand = definition->operands[i];
+            if (da64_compute_operand_jump_dest_vaddr(pc, bits, &operand, definition, addr)) {
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
 
 // Format an instruction to a string. It does not use the aliases yet
 // and always emits the primary mnemonic.
