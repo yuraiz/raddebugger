@@ -12,7 +12,7 @@
 #include "third_party/zydis/zydis.c"
 #endif
 
-#include "third_party/udisasm/aarch64.h"
+#include "third_party/disarm64/disarm64.h"
 
 internal DASM_Inst
 dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Syntax syntax)
@@ -146,10 +146,12 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
     {
       if(code.size >= 4)
       {
-        // TODO(yuraiz): udisasm is outdated and doesn't really
-        // provide api we need, but it's easy to integrade.
         char buf[2048];
-        disasm((U64)code.str, buf);
+
+        // TODO(yuraiz): Read additional information from the opcode.
+        DA64_Opcode opcode = da64_decode(*(U32*)code.str);
+
+        da64_fmt_insn_pc(vaddr, opcode, buf, sizeof(buf));
         String8 result = str8_cstring(buf);
         {
           inst.size   = sizeof(U32);
