@@ -28,6 +28,7 @@ typedef struct DMN_MAC_ExceptionResult
   S32 exception;
   S64 code;
   S64 subcode;
+  S64 subsubcode;
   B32 timed_out;
 } DMN_MAC_ExceptionResult;
 

@@ -127,6 +127,7 @@ catch_mach_exception_raise(
   result.exception = exception;
 	if(code_count > 0) { result.code = code[0]; }
 	if(code_count > 1) { result.subcode = code[1]; }
+	if(code_count > 2) { result.subsubcode = code[2]; }
 
 
 	if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
@@ -144,10 +145,11 @@ catch_mach_exception_raise(
 						(caddr_t)(uintptr_t)thread,
 						code[2]);
 	} else {
-		printf("Got exception %s (code: %llu subcode: %p)\n",
+		printf("Got exception %s (code: %llu, subcode: %p, subsubcode: %p)\n",
 			exc_type_to_string(result.exception), 
 			result.code,
-			result.subcode
+			result.subcode,
+			result.subsubcode
 		);
 	}
 
