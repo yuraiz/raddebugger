@@ -221,6 +221,31 @@ mach_compute_image_size(MACH_Bin info)
   return result;
 }
 
+internal U64
+mach_get_entry_point_voffset(MACH_Bin info)
+{
+  U64 result = 0;
+  U8 *command_buf = info.buf;
+  for EachIndex(i, info.command_count)
+  {
+    struct load_command *ld_cmd = (struct load_command *)command_buf;
+    U32 cmd = ld_cmd->cmd;
+    U32 size = ld_cmd->cmdsize;
+    switch(cmd)
+    {
+      default:{break;}
+      case LC_MAIN:
+      {
+        struct entry_point_command *command = (struct entry_point_command*)ld_cmd;
+        // NOTE(yuraiz): We can also get stacksize here.
+        return command->entryoff;
+      } break;
+    }
+    command_buf += size;
+  }
+  return result;
+}
+
 internal String8
 mach_try_locate_dsym(Arena* arena, String8 image_file_path, Guid uuid)
 {

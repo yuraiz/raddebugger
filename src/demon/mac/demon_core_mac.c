@@ -517,6 +517,11 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
   module->load_vaddr = load_address; 
   module->name_vaddr = name_vaddr;
   module->size       = mach_compute_image_size(info);
+
+  module->phvaddr = mach_get_entry_point_voffset(info);
+  if(module->phvaddr != 0) {
+    module->phvaddr += module->base_vaddr;
+  }
   
   scratch_end(scratch);
   return module;
@@ -896,6 +901,9 @@ dmn_mac_push_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Proc
   e->address         = module->base_vaddr;
   e->string          = push_str8_copy(arena, path);
   e->size            = module->size;
+
+  // TODO(yuraiz): Pass the entry point address correctly
+  e->elf_phdr_vrange.min = module->phvaddr;
 
   scratch_end(scratch);
 }

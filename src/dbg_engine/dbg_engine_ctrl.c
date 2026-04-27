@@ -4010,6 +4010,9 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, Rng1U64 vaddr_rang
 
     Guid uuid = mach_get_uuid(mach_bin);
     dsym_dbg_path = mach_try_locate_dsym(arena, path, uuid);
+
+    // NOTE(yuraiz): Currently we can't parse the main module correctly because of the vaddr issues.
+    entry_point_voff = elf_phdr_vrange.min;
   }
 
   //////////////////////////////
