@@ -11,6 +11,34 @@
 ////////////////////////////////
 //~ Helpers
 
+internal DMN_ActiveTrap *
+dmn_mac_try_set_trap(Arena *arena, DMN_Trap *trap)
+{
+  // NOTE(yuraiz): On macOS reading or writing to the memory fails fairly often.
+  DMN_ActiveTrap *result = 0;
+  String8 trap_inst = dmn_get_trap_inst();
+  U8 *swap_bytes = push_array(arena, U8, trap_inst.size);
+  if(dmn_process_read(trap->process, r1u64(trap->vaddr, trap->vaddr + trap_inst.size), swap_bytes) == trap_inst.size)
+  {
+    // NOTE(yuraiz): Initially the check was `== trap_inst.size`, but since the type is B32 I assume that's a mistake.
+    if(dmn_process_write(trap->process, r1u64(trap->vaddr, trap->vaddr + trap_inst.size), trap_inst.str))
+    {
+      result = push_array(arena, DMN_ActiveTrap, 1);
+      result->trap       = trap;
+      result->swap_bytes = str8(swap_bytes, trap_inst.size);
+    }
+    else
+    {
+      fprintf(stderr, "failed to write trap instruction\n");
+    }
+  }
+  else
+  {
+    fprintf(stderr, "failed to read original bytes\n");
+  }
+  return result;
+}
+
 internal B32
 dmn_mac_write_to_protected(
     const task_t task,
@@ -1263,6 +1291,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
   {
     // turn the breakpoint back on and disable single step if needed
     dmn_mac_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, true, !thread->clear_single_step); 
+    thread->hit_hardware_breakpoint = 0;
     thread->clear_single_step = 0;
     result = 1;
   }
@@ -1658,13 +1687,22 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           if(!process) { continue; }
           
           // trap instruction
-          DMN_ActiveTrap *active_trap = dmn_set_trap(scratch.arena, trap);
-          
-          // add trap to the active list
-          SLLQueuePush(active_trap_first, active_trap_last, active_trap);
-          
-          // add (address -> trap)
-          hash_table_push_u64_raw(scratch.arena, active_trap_ht, trap->vaddr, active_trap);
+          DMN_ActiveTrap *active_trap = dmn_mac_try_set_trap(scratch.arena, trap);
+          if(active_trap != 0)
+          {
+            printf("Set trap %p\n", trap->vaddr);
+            
+            // add trap to the active list
+            SLLQueuePush(active_trap_first, active_trap_last, active_trap);
+            
+            // add (address -> trap)
+            hash_table_push_u64_raw(scratch.arena, active_trap_ht, trap->vaddr, active_trap);
+          }
+          else
+          {
+            // TODO(yuraiz): Somehow pass the failure to GUI
+            printf("Failed to set trap %p\n", trap->vaddr);
+          }
         }
       }
     }
@@ -1941,18 +1979,28 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         }
       }
 
+      // read thread registers
+      {
+        DMN_MAC_Thread *thread = dmn_mac_thread_from_pid(result.thread);
+        thread->is_reg_block_dirty = !dmn_mac_thread_read_reg_block(thread);
+      }
+
       if(result.exception == EXC_BREAKPOINT)
       {
         DMN_MAC_Thread *thread = dmn_mac_thread_from_pid(result.thread);
         if(!dmn_mac_event_probe_breakpoint(arena, &events, thread, result.subcode))
         {
           // TODO(yuraiz): handle different types of breakpoints
-          // DMN_MAC_Thread *thread = dmn_mac_thread_from_pid(result.thread);
-          // dmn_mac_push_event_single_step(arena, &events, thread);
-          // dmn_mac_event_breakpoint(arena, &events, active_trap_first, result.thread);
-          dmn_mac_event_exception(arena, &events, result.thread, 4); // sigtrap for now
-          break;
+          if(result.subcode == 0)
+          {
+            dmn_mac_event_single_step(arena, &events, result.thread);
+          }
+          else
+          {
+            dmn_mac_event_breakpoint(arena, &events, active_trap_first, result.thread);
+          }
         }
+        break;
       }
       
 
@@ -1989,7 +2037,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       
       if(!dmn_process_write(active_trap->trap->process, r1u64(active_trap->trap->vaddr, active_trap->trap->vaddr + active_trap->swap_bytes.size), active_trap->swap_bytes.str))
       {
-        Assert(0 && "failed to restore original instruction bytes");
+        // Assert(0 && "failed to restore original instruction bytes");
       }
     }
   }
