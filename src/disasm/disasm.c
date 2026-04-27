@@ -12,7 +12,8 @@
 #include "third_party/zydis/zydis.c"
 #endif
 
-#include "third_party/disarm64/disarm64.h"
+#define BINARY_NINJA_ARM64_IMPLEMENTATION
+#include "third_party/binary-ninja-disassembler/arm64.h"
 
 internal DASM_Inst
 dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Syntax syntax)
@@ -146,41 +147,142 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
     {
       if(code.size >= 4)
       {
-        char buf[2048];
-
-        // TODO(yuraiz): Read additional information from the opcode.
-        DA64_Opcode opcode = da64_decode(*(U32*)code.str);
-        
-        da64_fmt_insn_pc(vaddr, opcode, buf, sizeof(buf));
-        String8 result = str8_cstring(buf);
-        
-        da64_u64 jump_dest_vaddr = 0;
-        da64_compute_jump_dest_vaddr(vaddr, opcode, &jump_dest_vaddr);
-        
+        char buf[2048] = {0};
         DASM_InstFlags flags = 0;
-        DA64_InsnClass insn_class = opcode.definition->class;
-        
-        // NOTE(yuraiz): I'm not really famliar with arm64 assembly, so I most certainly set something incorrectly.
-        switch (insn_class) {
-          case DA64_InsnClass_BRANCH_IMM:
-          case DA64_InsnClass_BRANCH_REG:
-          case DA64_InsnClass_COMPBRANCH:
+        U64 jump_dest_vaddr = 0;
+
+        // TODO(yuraiz): Read additional information from the instruction.
+        Instruction instr = {0};
+        aarch64_decompose(*(U32*)code.str, &instr, vaddr);
+        aarch64_disassemble(&instr, buf, sizeof(buf));
+
+        // NOTE(yuraiz): Can be the jump destination, can be just an address
+        U64 label_addr = 0;
+        Register first_reg = REG_NONE;
+        for EachIndex(i, MAX_OPERANDS)
+        {
+          if(instr.operands[i].operandClass == LABEL)
           {
+            label_addr = instr.operands[i].immediate;
+          }
+          if(instr.operands[i].operandClass == REG)
+          {
+            if(i == 0)
+            {
+              first_reg = instr.operands[i].reg[0];
+            } 
+          }
+        }
+
+        if(first_reg == REG_SP)
+        {
+          flags |= DASM_InstFlag_ChangesStackPointer;
+          // TODO(yuraiz): That's mostly lying, check for the immediate operand
+          flags |= DASM_InstFlag_ChangesStackPointerVariably;
+        }
+
+        switch (instr.operation)
+        {
+          // call instructions
+          case ARM64_BL:
+          case ARM64_BLR:
+          case ARM64_BLRAA:
+          case ARM64_BLRAAZ:
+          case ARM64_BLRAB:
+          case ARM64_BLRABZ:
+          {
+            jump_dest_vaddr = label_addr;
+            flags |= DASM_InstFlag_Call;
+          }break;
+          
+          // jump instructions
+          case ARM64_B:
+          case ARM64_BR:
+          case ARM64_BRAA:
+          case ARM64_BRAAZ:
+          case ARM64_BRAB:
+          case ARM64_BRABZ:
+          {
+            jump_dest_vaddr = label_addr;
+            flags |= DASM_InstFlag_UnconditionalJump;
+          }break;
+
+          // conditional branches
+          case ARM64_B_AL:
+          case ARM64_B_CC:
+          case ARM64_B_CS:
+          case ARM64_B_EQ:
+          case ARM64_B_GE:
+          case ARM64_B_GT:
+          case ARM64_B_HI:
+          case ARM64_B_LE:
+          case ARM64_B_LS:
+          case ARM64_B_LT:
+          case ARM64_B_MI:
+          case ARM64_B_NE:
+          case ARM64_B_NV:
+          case ARM64_B_PL:
+          case ARM64_B_VC:
+          case ARM64_B_VS:
+
+          // compare and branch
+          case ARM64_CBBEQ:
+          case ARM64_CBBGE:
+          case ARM64_CBBGT:
+          case ARM64_CBBHI:
+          case ARM64_CBBHS:
+          case ARM64_CBBLE:
+          case ARM64_CBBLO:
+          case ARM64_CBBLS:
+          case ARM64_CBBLT:
+          case ARM64_CBBNE:
+          case ARM64_CBEQ:
+          case ARM64_CBGE:
+          case ARM64_CBGT:
+          case ARM64_CBHEQ:
+          case ARM64_CBHGE:
+          case ARM64_CBHGT:
+          case ARM64_CBHHI:
+          case ARM64_CBHHS:
+          case ARM64_CBHI:
+          case ARM64_CBHLE:
+          case ARM64_CBHLO:
+          case ARM64_CBHLS:
+          case ARM64_CBHLT:
+          case ARM64_CBHNE:
+          case ARM64_CBHS:
+          case ARM64_CBLE:
+          case ARM64_CBLO:
+          case ARM64_CBLS:
+          case ARM64_CBLT:
+          case ARM64_CBNE:
+          case ARM64_CBNZ:
+          case ARM64_CBZ:
+          {
+            jump_dest_vaddr = label_addr;
             flags |= DASM_InstFlag_Branch;
           }break;
-        }
 
-        switch (opcode.mnemonic) {
-          case DA64_Mnemonic_bl:{
-          flags |=DASM_InstFlag_Call;
-          }break;
-          case DA64_Mnemonic_ret:
-          case DA64_Mnemonic_retaa:
-          case DA64_Mnemonic_retab: {
+          // return
+          case ARM64_RET:
+	        case ARM64_RETAA:
+	        case ARM64_RETAASPPC:
+	        case ARM64_RETAASPPCR:
+	        case ARM64_RETAB:
+	        case ARM64_RETABSPPC:
+	        case ARM64_RETABSPPCR:
+          {
             flags |= DASM_InstFlag_Return;
           }break;
-        }
 
+          default:
+          {
+            flags |= DASM_InstFlag_NonFlow;
+          }break;
+        }
+          
+        // String8 result = push_str8f(arena, "%-40S | %S", result1, result2);
+        String8 result = str8_cstring(buf);
         {
           inst.flags           = flags;
           inst.size            = sizeof(U32);

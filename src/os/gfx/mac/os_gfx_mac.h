@@ -12,9 +12,9 @@
 #undef internal
 #undef global
 #define os_release os_release_object
+#define NS_SUPPRESS_MIN_MAX_ABS
 
 #include <CoreGraphics/CoreGraphics.h>
-// #include <objc/NSObjCRuntime.h>
 #include <objc/objc-runtime.h>
 
 #import <AppKit/AppKit.h>
