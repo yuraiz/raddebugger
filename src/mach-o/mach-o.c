@@ -144,7 +144,7 @@ dw_input_from_mach_bin(Arena *arena, MACH_Bin bin, String8 data)
 
             if(section_kind == DW_Section_Null)
             {
-              fprintf(stderr, "Unknown section kind: %d\n", section_kind);
+              fprintf(stderr, "Unknown section kind: %d (%s)\n", section_kind, section_name);
             }
             
             DW_Section *d = &result.sec[section_kind];
