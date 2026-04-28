@@ -548,7 +548,7 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
 
   module->phvaddr = mach_get_entry_point_voffset(info);
   if(module->phvaddr != 0) {
-    module->phvaddr += module->base_vaddr;
+    module->phvaddr += module->load_vaddr;
   }
   
   scratch_end(scratch);
