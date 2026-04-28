@@ -981,38 +981,35 @@ dmn_mac_push_event_exception(Arena *arena, DMN_EventList *events, DMN_MAC_Thread
   local_persist B8 is_repeatable[] =
   {
     0, // null
-    1, // 1 SIGHUP
-    1, // 2 SIGINT
-    1, // 3 SIGQUIT
-    1, // 4 SIGTRAP
-    1, // 5 SIGABRT
-    1, // 6 SIGIOT
-    1, // 7 SIGBUS
-    1, // 8 SIGFPE
-    1, // 9 SIGKILL
-    1, // 10 SIGUSR1
-    1, // 11 SIGSEGV
-    1, // 12 SIGUSR2
-    1, // 13 SIGPIPE
-    1, // 14 SIGALRM
-    1, // 15 SIGTERM
-    1, // 16 SIGTKFLT
-    0, // 17 SIGCHLD
-    0, // 18 SIGCONT
-    1, // 19 SIGSTOP
-    1, // 20 SIGTSP
-    1, // 21 SIGTTIN
-    1, // 22 SIGTTOU
-    0, // 23 SIGURG
-    1, // 24 SIGXCPU
-    1, // 25 SIGXFSZ
-    1, // 26 SIGVTALRM
-    1, // 27 SIGPROF
-    0, // 28 SIGWINCH
-    1, // 29 SIGIO
-    1, // 30 SIGPWR
-    1, // 31 SIGSYS
-    1, // 32 SIGUNUSED
+    [SIGHUP] = 1,
+    [SIGINT] = 1,
+    [SIGQUIT] = 1,
+    [SIGTRAP] = 1,
+    [SIGABRT] = 1,
+    [SIGIOT] = 1,
+    [SIGBUS] = 1,
+    [SIGFPE] = 1,
+    [SIGKILL] = 1,
+    [SIGUSR1] = 1,
+    [SIGSEGV] = 1,
+    [SIGUSR2] = 1,
+    [SIGPIPE] = 1,
+    [SIGALRM] = 1,
+    [SIGTERM] = 1,
+    [SIGCHLD] = 0,
+    [SIGCONT] = 0,
+    [SIGSTOP] = 1,
+    [SIGTTIN] = 1,
+    [SIGTTOU] = 1,
+    [SIGURG] = 0,
+    [SIGXCPU] = 1,
+    [SIGXFSZ] = 1,
+    [SIGVTALRM] = 1,
+    [SIGPROF] = 1,
+    [SIGWINCH] = 0,
+    [SIGIO] = 1,
+    [SIGSYS] = 1,
+    // TODO(yuraiz): define more of the signals here
   };
   
   DMN_Event *e = dmn_event_list_push(arena, events);
@@ -1851,6 +1848,14 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         // NOTE(yuraiz): As I understand task_suspend is reliable enough
         if(dmn_mac_state->is_halting)
         {
+          // Update the register cache
+          for EachNode(process, DMN_MAC_Process, dmn_mac_state->first_process)
+          {
+            for EachNode(thread, DMN_MAC_Thread, process->first_thread)
+            {
+              dmn_mac_thread_read_reg_block(thread);
+            }
+          }
           is_halt_done = 1;
           break;
         }
@@ -2003,16 +2008,16 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         break;
       }
       
-
-      //   {
-   
-      //   }
-      //   else
-      //   {
-      //     dmn_mac_event_exception(arena, &events, wait_id, wstopsig);
-      //   }
-      // }
-      // else { Assert(0 && "unexpected stop code"); }
+      if(result.exception == EXC_BAD_ACCESS)
+      {
+        dmn_mac_event_exception(arena, &events, result.thread, SIGSEGV);
+        break;
+      }
+      if(result.exception == EXC_SOFTWARE && result.code == EXC_SOFT_SIGNAL)
+      {
+        dmn_mac_event_exception(arena, &events, result.thread, result.subcode);
+        break;
+      }
     } while(running_threads.count > 0 || dmn_mac_state->process_pending_creation > 0 || dmn_mac_state->threads_pending_creation > 0);
     
     // finalize halter state
@@ -2196,7 +2201,8 @@ dmn_thread_read_reg_block(DMN_Handle thread_handle, void *reg_block)
   DMN_AccessScope
   {
     DMN_MAC_Thread *thread = dmn_mac_thread_from_handle(thread_handle);
-    if(thread)
+    // TODO(yuraiz): fix the bug with a nil reg block
+    if(thread && thread->reg_block)
     {
       U64 reg_block_size = regs_block_size_from_arch(Arch_arm64);
       MemoryCopy(reg_block, thread->reg_block, reg_block_size);
