@@ -897,7 +897,7 @@ dmn_mac_thread_step_once_if_at_address(Arena *arena, DMN_EventList *events, DMN_
   else
   {
     // TODO(yuraiz): push the exception result somewhere.
-    // I think that there are hight odds that we'll hit that exception another time.
+    // I think that there are high odds that we'll hit that exception another time.
     // So it should be okay to skip an exception for now.
   }
   
@@ -921,7 +921,7 @@ dmn_mac_thread_step_once_if_at_address(Arena *arena, DMN_EventList *events, DMN_
     thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
   }
 
-  // NOTE(yuraiz): That way we hit breakpoints twise, but I don't yet exactly
+  // NOTE(yuraiz): That way we hit breakpoints twice, but I don't yet exactly
   // understand how the ctrl layer sends traps in the first place.
   //
   // I guess there's a difference between what the debugger expects and the
