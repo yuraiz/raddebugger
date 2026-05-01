@@ -180,109 +180,145 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
           // TODO(yuraiz): That's mostly lying, check for the immediate operand
           flags |= DASM_InstFlag_ChangesStackPointerVariably;
         }
-
-        switch (instr.operation)
+        else
         {
-          // call instructions
-          case ARM64_BL:
-          case ARM64_BLR:
-          case ARM64_BLRAA:
-          case ARM64_BLRAAZ:
-          case ARM64_BLRAB:
-          case ARM64_BLRABZ:
+          switch (instr.operation)
           {
-            jump_dest_vaddr = label_addr;
-            flags |= DASM_InstFlag_Call;
-          }break;
-          
-          // jump instructions
-          case ARM64_B:
-          case ARM64_BR:
-          case ARM64_BRAA:
-          case ARM64_BRAAZ:
-          case ARM64_BRAB:
-          case ARM64_BRABZ:
-          {
-            jump_dest_vaddr = label_addr;
-            flags |= DASM_InstFlag_UnconditionalJump;
-          }break;
+            // call instructions
+            case ARM64_BL:
+            case ARM64_BLR:
+            case ARM64_BLRAA:
+            case ARM64_BLRAAZ:
+            case ARM64_BLRAB:
+            case ARM64_BLRABZ:
+            {
+              jump_dest_vaddr = label_addr;
+              flags |= DASM_InstFlag_Call;
+            }break;
+            
+            // jump instructions
+            case ARM64_B:
+            case ARM64_BR:
+            case ARM64_BRAA:
+            case ARM64_BRAAZ:
+            case ARM64_BRAB:
+            case ARM64_BRABZ:
+            {
+              jump_dest_vaddr = label_addr;
+              flags |= DASM_InstFlag_UnconditionalJump;
+            }break;
 
-          // conditional branches
-          case ARM64_B_AL:
-          case ARM64_B_CC:
-          case ARM64_B_CS:
-          case ARM64_B_EQ:
-          case ARM64_B_GE:
-          case ARM64_B_GT:
-          case ARM64_B_HI:
-          case ARM64_B_LE:
-          case ARM64_B_LS:
-          case ARM64_B_LT:
-          case ARM64_B_MI:
-          case ARM64_B_NE:
-          case ARM64_B_NV:
-          case ARM64_B_PL:
-          case ARM64_B_VC:
-          case ARM64_B_VS:
+            // conditional branches
+            case ARM64_B_AL:
+            case ARM64_B_CC:
+            case ARM64_B_CS:
+            case ARM64_B_EQ:
+            case ARM64_B_GE:
+            case ARM64_B_GT:
+            case ARM64_B_HI:
+            case ARM64_B_LE:
+            case ARM64_B_LS:
+            case ARM64_B_LT:
+            case ARM64_B_MI:
+            case ARM64_B_NE:
+            case ARM64_B_NV:
+            case ARM64_B_PL:
+            case ARM64_B_VC:
+            case ARM64_B_VS:
 
-          // compare and branch
-          case ARM64_CBBEQ:
-          case ARM64_CBBGE:
-          case ARM64_CBBGT:
-          case ARM64_CBBHI:
-          case ARM64_CBBHS:
-          case ARM64_CBBLE:
-          case ARM64_CBBLO:
-          case ARM64_CBBLS:
-          case ARM64_CBBLT:
-          case ARM64_CBBNE:
-          case ARM64_CBEQ:
-          case ARM64_CBGE:
-          case ARM64_CBGT:
-          case ARM64_CBHEQ:
-          case ARM64_CBHGE:
-          case ARM64_CBHGT:
-          case ARM64_CBHHI:
-          case ARM64_CBHHS:
-          case ARM64_CBHI:
-          case ARM64_CBHLE:
-          case ARM64_CBHLO:
-          case ARM64_CBHLS:
-          case ARM64_CBHLT:
-          case ARM64_CBHNE:
-          case ARM64_CBHS:
-          case ARM64_CBLE:
-          case ARM64_CBLO:
-          case ARM64_CBLS:
-          case ARM64_CBLT:
-          case ARM64_CBNE:
-          case ARM64_CBNZ:
-          case ARM64_CBZ:
-          {
-            jump_dest_vaddr = label_addr;
-            flags |= DASM_InstFlag_Branch;
-          }break;
+            // compare and branch
+            case ARM64_CBBEQ:
+            case ARM64_CBBGE:
+            case ARM64_CBBGT:
+            case ARM64_CBBHI:
+            case ARM64_CBBHS:
+            case ARM64_CBBLE:
+            case ARM64_CBBLO:
+            case ARM64_CBBLS:
+            case ARM64_CBBLT:
+            case ARM64_CBBNE:
+            case ARM64_CBEQ:
+            case ARM64_CBGE:
+            case ARM64_CBGT:
+            case ARM64_CBHEQ:
+            case ARM64_CBHGE:
+            case ARM64_CBHGT:
+            case ARM64_CBHHI:
+            case ARM64_CBHHS:
+            case ARM64_CBHI:
+            case ARM64_CBHLE:
+            case ARM64_CBHLO:
+            case ARM64_CBHLS:
+            case ARM64_CBHLT:
+            case ARM64_CBHNE:
+            case ARM64_CBHS:
+            case ARM64_CBLE:
+            case ARM64_CBLO:
+            case ARM64_CBLS:
+            case ARM64_CBLT:
+            case ARM64_CBNE:
+            case ARM64_CBNZ:
+            case ARM64_CBZ:
+            {
+              jump_dest_vaddr = label_addr;
+              flags |= DASM_InstFlag_Branch;
+            }break;
 
-          // return
-          case ARM64_RET:
-	        case ARM64_RETAA:
-	        case ARM64_RETAASPPC:
-	        case ARM64_RETAASPPCR:
-	        case ARM64_RETAB:
-	        case ARM64_RETABSPPC:
-	        case ARM64_RETABSPPCR:
-          {
-            flags |= DASM_InstFlag_Return;
-          }break;
+            // return
+            case ARM64_RET:
+            case ARM64_RETAA:
+            case ARM64_RETAASPPC:
+            case ARM64_RETAASPPCR:
+            case ARM64_RETAB:
+            case ARM64_RETABSPPC:
+            case ARM64_RETABSPPCR:
+            {
+              flags |= DASM_InstFlag_Return;
+            }break;
 
-          default:
-          {
-            flags |= DASM_InstFlag_NonFlow;
-          }break;
+            default:
+            {
+              flags |= DASM_InstFlag_NonFlow;
+            }break;
+          }
         }
-          
-        // String8 result = push_str8f(arena, "%-40S | %S", result1, result2);
+
+        String8List flag_list = {0};
+        if(flags & DASM_InstFlag_Call) {
+          str8_list_push(arena, &flag_list, str8_lit("call"));
+        }
+        if(flags & DASM_InstFlag_Branch) {
+          str8_list_push(arena, &flag_list, str8_lit("branch"));
+        }
+        if(flags & DASM_InstFlag_UnconditionalJump) {
+          str8_list_push(arena, &flag_list, str8_lit("jump"));
+        }
+        if(flags & DASM_InstFlag_Return) {
+          str8_list_push(arena, &flag_list, str8_lit("ret"));
+        }
+        if(flags & DASM_InstFlag_NonFlow) {
+          str8_list_push(arena, &flag_list, str8_lit("n/f"));
+        }
+        if(flags & DASM_InstFlag_Repeats) {
+          str8_list_push(arena, &flag_list, str8_lit("repeats"));
+        }
+        if(flags & DASM_InstFlag_ChangesStackPointer) {
+          str8_list_push(arena, &flag_list, str8_lit("sp"));
+        }
+        if(flags & DASM_InstFlag_ChangesStackPointerVariably) {
+          str8_list_push(arena, &flag_list, str8_lit("sp/var"));
+        }
+
+        StringJoin flags_join = {0};
+        flags_join.sep = str8_lit(",");
+        String8 flag_string = str8_list_join(arena, &flag_list, &flags_join);
+
         String8 result = str8_cstring(buf);
+        if (flags != DASM_InstFlag_NonFlow)
+        {
+          result = push_str8f(arena, "%S (flags=%S)", result, flag_string);
+        }
+
         {
           inst.flags           = flags;
           inst.size            = sizeof(U32);
