@@ -853,6 +853,94 @@ dmn_mac_process_from_pid(pid_t pid)
 // event helpers
 
 internal void
+dmn_mac_thread_step_once_if_at_address(Arena *arena, DMN_EventList *events, DMN_MAC_Thread *thread, U64 ip_vaddr)
+{
+  //- check if the cached ip matches ip_vaddr
+  if(dmn_mac_thread_read_ip(thread) != ip_vaddr) {
+    return;
+  }
+
+  // NOTE(yuraiz): The task is expected to be suspended when that function is called.
+  // every thread except the selected gets suspended, and the thread is ran for a single step.
+
+  arm_debug_state64_t debug_state = {0};
+  mach_msg_type_number_t count = ARM_DEBUG_STATE64_COUNT;
+
+  //- yuraiz: set the single stepping bit
+  thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+
+  B32 was_single_step = debug_state.__mdscr_el1 & 0x1; 
+  debug_state.__mdscr_el1 |= 0x1;
+
+  thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
+
+  DMN_MAC_Process *process = thread->process;
+
+  //- yuraiz: suspend every thread except the selected
+  for EachNode(other_thread, DMN_MAC_Thread, process->first_thread)
+  {
+    if(other_thread->tid != thread->tid)
+    {
+      thread_suspend(other_thread->tid);
+    }
+  }
+
+  //- yuraiz: resume the task
+  // TODO(yuraiz): check if it was suspended before.
+  task_resume(process->task);
+
+  DMN_MAC_ExceptionResult result = dmn_mac_wait_for_exception(dmn_mac_state->exc_port);
+  if(result.exception == EXC_BREAKPOINT && result.subcode == 0)
+  {
+    //- yuraiz: we made the step here
+  }
+  else
+  {
+    // TODO(yuraiz): push the exception result somewhere.
+    // I think that there are hight odds that we'll hit that exception another time.
+    // So it should be okay to skip an exception for now.
+  }
+  
+  //- yuraiz: suspend the task
+  task_suspend(process->task);
+
+  //- yuraiz: resume the threads back
+  for EachNode(other_thread, DMN_MAC_Thread, process->first_thread)
+  {
+    if(other_thread->tid != thread->tid)
+    {
+      thread_resume(other_thread->tid);
+    }
+  }
+
+  //- yuraiz: restore the single stepping bit
+  if(!was_single_step)
+  {
+    thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+    debug_state.__mdscr_el1 |= ~(0x1);
+    thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
+  }
+
+  // NOTE(yuraiz): That way we hit breakpoints twise, but I don't yet exactly
+  // understand how the ctrl layer sends traps in the first place.
+  //
+  // I guess there's a difference between what the debugger expects and the
+  // actual arm64 breakpoint exception behavior.
+  //
+  // If we skip generating an event when the breakpoint just hit it'll be an
+  // instruction late.
+  // If we skip generating an event after we got past the breakpoint the
+  // program will just skip some of the traps.
+  //
+  // I wouldn't expect the debugger to set the traps where it does in the
+  // first place.
+  dmn_mac_event_breakpoint(arena, events, 0, thread->tid);
+
+  //- yuraiz: update the cache here for the thread
+  dmn_mac_thread_read_reg_block(thread);
+}
+
+internal void
 dmn_mac_push_event_create_process(Arena *arena, DMN_EventList *events, DMN_MAC_Process *process)
 {
   Temp scratch = scratch_begin(&arena, 1);
@@ -1302,55 +1390,61 @@ internal void
 dmn_mac_event_breakpoint(Arena *arena, DMN_EventList *events, DMN_ActiveTrap *user_traps, pid_t tid)
 {
   DMN_MAC_Thread  *thread  = dmn_mac_thread_from_pid(tid);
-  DMN_MAC_Process *process = thread->process;
   U64              ip      = dmn_mac_thread_read_ip(thread);
-  // TODO
-  // is this user trap?
-  DMN_ActiveTrap *hit_user_trap = 0;
-  {
-    DMN_Handle process_handle = dmn_mac_handle_from_process(process);
-    for EachNode(active_trap, DMN_ActiveTrap, user_traps)
-    {
-      if(MemoryCompare(&active_trap->trap->process, &process_handle, sizeof(DMN_Handle)) == 0)
-      {
-        if(active_trap->trap->vaddr == ip-1)
-        {
-          hit_user_trap = active_trap;
-          break;
-        }
-      }
-    }
-  }
+  dmn_mac_push_event_breakpoint(arena, events, thread, ip);
   
-  // is this a probe trap?
-  DMN_MAC_ProbeType probe_type = DMN_MAC_ProbeType_Null;
-  if(hit_user_trap == 0)
-  {
-    for EachNode(active_trap, DMN_ActiveTrap, process->ctx->first_probe_trap)
-    {
-      if(active_trap->trap->vaddr == ip-1)
-      {
-        probe_type = active_trap->trap->id;
-        break;
-      }
-    }
-  }
+  // TODO(yuraiz): figure out what was that for:
+  
+  // DMN_MAC_Thread  *thread  = dmn_mac_thread_from_pid(tid);
+  // DMN_MAC_Process *process = thread->process;
+  // U64              ip      = dmn_mac_thread_read_ip(thread);
+  // // TODO
+  // // is this user trap?
+  // DMN_ActiveTrap *hit_user_trap = 0;
+  // {
+  //   DMN_Handle process_handle = dmn_mac_handle_from_process(process);
+  //   for EachNode(active_trap, DMN_ActiveTrap, user_traps)
+  //   {
+  //     if(MemoryCompare(&active_trap->trap->process, &process_handle, sizeof(DMN_Handle)) == 0)
+  //     {
+  //       if(active_trap->trap->vaddr == ip-1)
+  //       {
+  //         hit_user_trap = active_trap;
+  //         break;
+  //       }
+  //     }
+  //   }
+  // }
+  
+  // // is this a probe trap?
+  // DMN_MAC_ProbeType probe_type = DMN_MAC_ProbeType_Null;
+  // if(hit_user_trap == 0)
+  // {
+  //   for EachNode(active_trap, DMN_ActiveTrap, process->ctx->first_probe_trap)
+  //   {
+  //     if(active_trap->trap->vaddr == ip-1)
+  //     {
+  //       probe_type = active_trap->trap->id;
+  //       break;
+  //     }
+  //   }
+  // }
 
-  if(probe_type == DMN_MAC_ProbeType_Null)
-  {
-    // rollback IP on user traps
-    if(hit_user_trap)
-    {
-      U64 ip = dmn_mac_thread_read_ip(thread);
-      dmn_mac_thread_write_ip(thread, ip - 1);
-    }
+  // if(probe_type == DMN_MAC_ProbeType_Null)
+  // {
+  //   // rollback IP on user traps
+  //   if(hit_user_trap)
+  //   {
+  //     U64 ip = dmn_mac_thread_read_ip(thread);
+  //     dmn_mac_thread_write_ip(thread, ip - 1);
+  //   }
     
-    DMN_Event *e = dmn_event_list_push(arena, events);
-    e->kind                = DMN_EventKind_Breakpoint;
-    e->process             = dmn_mac_handle_from_process(process);
-    e->thread              = dmn_mac_handle_from_thread(thread);
-    e->instruction_pointer = dmn_mac_thread_read_ip(thread);
-  }
+  //   DMN_Event *e = dmn_event_list_push(arena, events);
+  //   e->kind                = DMN_EventKind_Breakpoint;
+  //   e->process             = dmn_mac_handle_from_process(process);
+  //   e->thread              = dmn_mac_handle_from_thread(thread);
+  //   e->instruction_pointer = dmn_mac_thread_read_ip(thread);
+  // }
 }
 
 internal void
@@ -1683,12 +1777,16 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           DMN_MAC_Process *process = dmn_mac_process_from_handle(trap->process);
           if(!process) { continue; }
           
+          //- yuraiz: check if a thread is already on the trap, if so it should step over it
+          for EachNode(thread, DMN_MAC_Thread, process->first_thread)
+          {
+            dmn_mac_thread_step_once_if_at_address(arena, &events, thread, trap->vaddr);
+          }
+
           // trap instruction
           DMN_ActiveTrap *active_trap = dmn_mac_try_set_trap(scratch.arena, trap);
           if(active_trap != 0)
-          {
-            printf("Set trap %p\n", trap->vaddr);
-            
+          { 
             // add trap to the active list
             SLLQueuePush(active_trap_first, active_trap_last, active_trap);
             
@@ -2018,6 +2116,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         dmn_mac_event_exception(arena, &events, result.thread, result.subcode);
         break;
       }
+    // TODO(yuraiz): Fix running threads info
     } while(running_threads.count > 0 || dmn_mac_state->process_pending_creation > 0 || dmn_mac_state->threads_pending_creation > 0);
     
     // finalize halter state
