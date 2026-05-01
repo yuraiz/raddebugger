@@ -901,7 +901,12 @@ d_lines_array_from_dbgi_key_file_path_line_range(Arena *arena, DI_Key dbgi_key, 
         D_LineList *list = &array.v[line_idx];
         U32 voff_count = 0;
         U64 *voffs = rdi_line_voffs_from_num(&line_map, u32_from_u64_saturate((U64)line_num), &voff_count);
-        if(lines_num_voffs[line_idx] < 8) ProfScope("iterate voffs (%i)", voff_count) for(U64 idx = 0; idx < voff_count; idx += 1)
+        // NOTE(yuraiz): Initially the limit was 8, but if converting from dwarf you can gen much more offsets.
+        if(voff_count > 32)
+        {
+          Assert(0 && "line voff limit exceeded");
+        }
+        if(lines_num_voffs[line_idx] < 32) ProfScope("iterate voffs (%i)", voff_count) for(U64 idx = 0; idx < voff_count; idx += 1)
         {
           U64 base_voff = voffs[idx];
           U64 unit_idx = rdi_vmap_idx_from_section_kind_voff(rdi, RDI_SectionKind_UnitVMap, base_voff);
@@ -922,7 +927,7 @@ d_lines_array_from_dbgi_key_file_path_line_range(Arena *arena, DI_Key dbgi_key, 
             SLLQueuePush(list->first, list->last, n);
             list->count += 1;
             lines_num_voffs[line_idx] += 1;
-            if(lines_num_voffs[line_idx] >= 8)
+            if(lines_num_voffs[line_idx] >= 32)
             {
               break;
             }
