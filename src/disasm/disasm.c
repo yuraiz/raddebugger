@@ -276,6 +276,13 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
               flags |= DASM_InstFlag_Return;
             }break;
 
+            // store/load fp and lr and increment/decrement sp
+            case ARM64_STP:
+            case ARM64_LDP:
+            {
+              flags |= DASM_InstFlag_ChangesStackPointer;
+            }break;
+
             default:
             {
               flags |= DASM_InstFlag_NonFlow;

@@ -1639,7 +1639,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           // trap instruction
           DMN_ActiveTrap *active_trap = dmn_mac_try_set_trap(scratch.arena, trap);
           if(active_trap != 0)
-          { 
+          {
             // add trap to the active list
             SLLQueuePush(active_trap_first, active_trap_last, active_trap);
             
@@ -1961,7 +1961,25 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       
       if(result.exception == EXC_BAD_ACCESS)
       {
-        dmn_mac_event_exception(arena, &events, result.thread, SIGSEGV);
+        // TODO(yuraiz): distinguish between different codes
+        if(result.code == 257)
+        {
+          printf("bad access %d\n", result.subcode);
+          DMN_MAC_Thread *thread = dmn_mac_thread_from_pid(result.thread);
+
+          DMN_Event *e = dmn_event_list_push(arena, &events);
+          e->kind                = DMN_EventKind_Exception;
+          e->process             = dmn_mac_handle_from_process(thread->process);
+          e->thread              = dmn_mac_handle_from_thread(thread);
+          e->instruction_pointer = dmn_mac_thread_read_ip(thread);
+          e->signo               = SIGSEGV;
+          e->exception_repeated  = 1;
+          e->address             = result.subcode;
+        }
+        else
+        {
+          dmn_mac_event_exception(arena, &events, result.thread, SIGSEGV);
+        }
         break;
       }
       if(result.exception == EXC_SOFTWARE && result.code == EXC_SOFT_SIGNAL)
