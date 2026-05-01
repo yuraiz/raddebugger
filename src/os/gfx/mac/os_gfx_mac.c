@@ -887,7 +887,7 @@ os_set_cursor(OS_Cursor cursor)
 internal void
 os_graphical_message(B32 error, String8 title, String8 message)
 {
-  // NOTE(yuraiz): The funciton can be run without app initialization,
+  // NOTE(yuraiz): The function can be run without app initialization,
   // so ensure "sharedApplication" is created and configured.
   [NSApplication sharedApplication];
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];

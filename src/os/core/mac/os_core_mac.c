@@ -868,7 +868,7 @@ os_process_launch(OS_ProcessLaunchParams *params)
       
       if(params->debug_subprocesses)
       {
-        // not suported
+        // not supported
         InvalidPath;
       }
       
