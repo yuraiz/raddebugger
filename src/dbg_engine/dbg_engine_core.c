@@ -377,6 +377,16 @@ d_trap_net_from_thread__step_over_line(Arena *arena, CTRL_Entity *thread)
     }
   }
   
+  // TODO(yuraiz): fix that problem somehow differently, either fix that in the conversion or check the second converter version.
+  // NOTE(yuraiz): conversion from dwarf info produces separate ranges that actually go one by one.
+  for EachNode(n, Rng1U64Node, all_vaddr_ranges_on_same_line.first)
+  {
+    if(line_vaddr_rng.max == n->v.min)
+    {
+      line_vaddr_rng.max = n->v.max;
+    }
+  }
+
   // rjf: opl line_vaddr_rng -> 0xf00f00 or 0xfeefee? => include in line vaddr range
   //
   // MSVC exports line info at these line numbers when /JMC (Just My Code) debugging
@@ -588,6 +598,16 @@ d_trap_net_from_thread__step_into_line(Arena *arena, CTRL_Entity *thread)
     }
   }
   
+  // TODO(yuraiz): fix that problem somehow differently, either fix that in the conversion or check the second converter version.
+  // NOTE(yuraiz): conversion from dwarf info produces separate ranges that actually go one by one.
+  for EachNode(n, Rng1U64Node, all_vaddr_ranges_on_same_line.first)
+  {
+    if(line_vaddr_rng.max == n->v.min)
+    {
+      line_vaddr_rng.max = n->v.max;
+    }
+  }
+
   // rjf: opl line_vaddr_rng -> 0xf00f00 or 0xfeefee? => include in line vaddr range
   //
   // MSVC exports line info at these line numbers when /JMC (Just My Code) debugging
