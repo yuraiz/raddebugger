@@ -164,7 +164,7 @@ typedef struct DMN_MAC_Module
 {
   U64 name_vaddr;
   U64 base_vaddr;
-  U64 load_vaddr;
+  U64 page_zero_size;
   U64 name_space_id;
   U64 size;
   U64 phvaddr;

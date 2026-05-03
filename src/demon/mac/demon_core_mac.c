@@ -541,15 +541,10 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
   // NOTE(yuraiz): That address expected to have the offset in some places,
   // but in other's it should be just load_address.
   // That offset ctrl_thread__module_open magic detection, but is required for the correct symbol mapping.
-  module->base_vaddr = load_address - mach_compute_image_offset(info); 
-  module->load_vaddr = load_address; 
-  module->name_vaddr = name_vaddr;
-  module->size       = mach_compute_image_size(info);
-
-  module->phvaddr = mach_get_entry_point_voffset(info);
-  if(module->phvaddr != 0) {
-    module->phvaddr += module->load_vaddr;
-  }
+  module->base_vaddr     = load_address;
+  module->page_zero_size = mach_compute_image_offset(info); 
+  module->name_vaddr     = name_vaddr;
+  module->size           = mach_compute_image_size(info);
   
   scratch_end(scratch);
   return module;
@@ -927,11 +922,9 @@ dmn_mac_push_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Proc
   e->module          = dmn_mac_handle_from_module(module);
   e->arch            = process->ctx->arch;
   e->address         = module->base_vaddr;
+  e->page_zero_size  = module->page_zero_size;
   e->string          = push_str8_copy(arena, path);
   e->size            = module->size;
-
-  // TODO(yuraiz): Pass the entry point address correctly
-  e->elf_phdr_vrange.min = module->phvaddr;
 
   scratch_end(scratch);
 }
@@ -1186,7 +1179,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
           B32 exists = 0;
           for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
           {
-            if(module->load_vaddr == load_address)
+            if(module->base_vaddr == load_address)
             {
               exists = 1;
             }
@@ -1210,7 +1203,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
           for EachIndex(i, info_count)
           {
             U64 load_address = (U64)image_info_array[i].imageLoadAddress;
-            if(module->load_vaddr == load_address)
+            if(module->base_vaddr == load_address)
             {
               dmn_mac_event_unload_module(arena, events, process, module);
             }
@@ -1231,7 +1224,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
           for EachIndex(i, info_count)
           {
             U64 load_address = (U64)image_info_array[i].imageLoadAddress;
-            if(module->load_vaddr == load_address)
+            if(module->base_vaddr == load_address)
             {
               exists = 1;
             }
@@ -1251,7 +1244,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
           B32 exists = 0;
           for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
           {
-            if(module->load_vaddr == load_address)
+            if(module->base_vaddr == load_address)
             {
               exists = 1;
             }
