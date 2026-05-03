@@ -82,6 +82,7 @@ struct DMN_Event
   Arch arch;
   U64 address;
   U64 size;
+  U64 page_zero_size; // on macOS debug info offset includes page zero
   String8 string;
   U32 code; // code gives pid & tid on CreateProcess and CreateThread (respectfully)
   U32 flags; // DMN_TrapFlags, if `DMN_EventKind_SetBreakpoint`

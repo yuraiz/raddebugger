@@ -4040,11 +4040,68 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, Rng1U64 vaddr_rang
     mach_bin.size = command_buf.size;
     mach_bin.buf = command_buf.str;
 
+    // TODO(yuraiz): try moving all of that to radbin
     Guid uuid = mach_get_uuid(mach_bin);
     dsym_dbg_path = mach_try_locate_dsym(arena, path, uuid);
+    
+    // NOTE(yuraiz): if dsym bundle wasn't found, try generating it with dsymutil.
+    // rust, for example, doesn't generate dsym by default, but the binary 
+    // contains references to object files that contain debug info. dsymutil
+    // can pack that debug info into dsym bundle.
+    String8 system_lib_prefix = str8_lit("/usr/lib/");
+    if(dsym_dbg_path.str == 0 &&
+       header.filetype & MH_EXECUTE &&
+       !str8_match(str8_prefix(path, system_lib_prefix.size), system_lib_prefix, 0))
+    {
+      //- yuraiz: check if the binary contains references to object symbols, it means that we can try generating .dSYM
+      B32 try_dsymutil = 0;
+      U8 *command_buf = mach_bin.buf;
+      for EachIndex(i, mach_bin.command_count)
+      {
+        struct load_command *ld_cmd = (struct load_command *)command_buf;
+        if(ld_cmd->cmd == LC_SYMTAB)
+        {
+          struct symtab_command *command = (struct symtab_command*)ld_cmd;
 
-    // NOTE(yuraiz): Currently we can't parse the main module correctly because of the vaddr issues.
-    entry_point_voff = elf_phdr_vrange.min;
+          mach_vm_address_t sym_addr = vaddr_range.min + command->symoff;
+          mach_vm_size_t sym_size = sizeof(struct nlist_64) * command->nsyms;
+          struct nlist_64 *syms = (struct nlist_64*) dmn_process_read_block(arena, process.dmn_handle, rng_1u64(sym_addr, sym_addr + sym_size)).str;
+          for EachIndex(i, command->nsyms)
+          {
+            if(syms[i].n_type == N_OSO)
+            {
+              try_dsymutil = 1;
+              break;
+            }
+          }
+        }
+        command_buf += ld_cmd->cmdsize;
+
+        if(try_dsymutil)
+        {
+          break;
+        }
+      }
+
+      if(try_dsymutil)
+      {
+        //- yuraiz: call dsymutil "path" -o "path.dSYM" to bundle DWARF debug info
+        OS_ProcessLaunchParams params = {0};
+        params.path = str8_lit("/usr/bin/");
+        params.inherit_env = 1;
+        params.consoleless = 1;
+
+        str8_list_pushf(scratch.arena, &params.cmd_line, "dsymutil");
+        str8_list_push(scratch.arena, &params.cmd_line, path);
+        str8_list_pushf(scratch.arena, &params.cmd_line, "-o");
+        str8_list_pushf(scratch.arena, &params.cmd_line, "%S.dSYM", path);
+        os_process_join(os_process_launch(&params), max_U64, 0);
+
+        dsym_dbg_path = mach_try_locate_dsym(arena, path, uuid);
+      }
+    }
+
+    entry_point_voff = vaddr_range.min + mach_get_entry_point_voffset(mach_bin);
   }
 
   //////////////////////////////
@@ -4502,7 +4559,8 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       out_evt1->parent     = process_handle;
       out_evt1->arch       = event->arch;
       out_evt1->entity_id  = event->code;
-      out_evt1->vaddr_rng  = r1u64(event->address, event->address+event->size);
+      // TODO(yuraiz): pass page_zero_size further, it isn't actually needed here
+      out_evt1->vaddr_rng  = r1u64(event->address-event->page_zero_size, event->address+event->size+event->page_zero_size);
       out_evt1->rip_vaddr  = event->address;
       out_evt1->timestamp  = exe_timestamp;
       out_evt1->string     = module_path;
