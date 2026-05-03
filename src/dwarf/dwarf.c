@@ -302,8 +302,9 @@ dw_sp_from_arch(Arch arch)
 {
   switch (arch) {
     default: NotImplemented;
-    case Arch_Null: return 0;
-    case Arch_x64:  return DW_RegX64_Rsp;
+    case Arch_Null:  return 0;
+    case Arch_x64:   return DW_RegX64_Rsp;
+    case Arch_arm64: return DW_RegArm64_SP;
   }
 }
 
@@ -839,7 +840,13 @@ dw_string_from_register(Arena *arena, Arch arch, U64 reg_id)
       }
     } break;
     case Arch_arm32: NotImplemented; break;
-    case Arch_arm64: NotImplemented; break;
+    case Arch_arm64: {
+      switch (reg_id) {
+#define X(_N, _ID, ...) case DW_RegArm64_##_N: reg_str = str8_lit(Stringify(_N)); break;
+        DW_Regs_Arm64_XList
+#undef X
+      }
+    } break;
     case Arch_x86: NotImplemented; break;
     default: InvalidPath; break;
   }

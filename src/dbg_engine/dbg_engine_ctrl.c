@@ -1934,6 +1934,18 @@ d_establish_frame_unwind_context__dwarf(Arena *arena, D_Handle process_handle, D
           }break;
           case Arch_x86:
           case Arch_arm64:
+          {
+            // NOTE(yuraiz): I don't see how CTRL_MemoryReadContextDwarfX64 is specific to x64, it should work for arm64 too.
+            CTRL_MemoryReadContextDwarfX64 *mem_read_ctx_arm64 = push_array(scratch.arena, CTRL_MemoryReadContextDwarfX64, 1);
+            mem_read_ctx_arm64->process_handle = process_handle;
+            mem_read_ctx_arm64->endt_us        = endt_us;
+            
+            mem_read_ctx = mem_read_ctx_arm64;
+            reg_read_ctx = regs;
+            
+            mem_read_func = ctrl_machine_mem_read;
+            reg_read_func = regs_read_dwarf_arm64;
+          }break;
           case Arch_arm32:
           {
             NotImplemented;
@@ -1993,6 +2005,26 @@ d_unwind_step__dwarf(D_Handle process_handle, Arch arch, void *regs, D_FrameUnwi
       reg_read_func  = regs_read_dwarf_x64;
       reg_write_func = regs_write_dwarf_x64;
     }break;
+    case Arch_x86:
+    case Arch_arm64:
+    {
+      CTRL_MemoryReadContextDwarfX64 *mem_read_ctx_arm64 = push_array(scratch.arena, CTRL_MemoryReadContextDwarfX64, 1);
+      mem_read_ctx_arm64->process_handle = process_handle;
+      mem_read_ctx_arm64->endt_us        = endt_us;
+      
+      mem_read_ctx   = mem_read_ctx_arm64;
+      reg_read_ctx   = regs;
+      reg_write_ctx  = regs;
+      
+      mem_read_func  = ctrl_machine_mem_read;
+      reg_read_func  = regs_read_dwarf_arm64;
+      reg_write_func = regs_write_dwarf_arm64;
+    }break;
+    case Arch_arm32:
+    {
+      NotImplemented;
+    }break;
+    default: { InvalidPath; }break;
   }
   
   // apply register rules to the context
