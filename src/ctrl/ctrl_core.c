@@ -4700,7 +4700,7 @@ ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, CTRL_Msg *msg, 
       out_evt1->entity_id  = event->code;
       // TODO(yuraiz): pass page_zero_size further, it isn't actually needed here
       out_evt1->vaddr_rng  = r1u64(event->address-event->page_zero_size, event->address+event->size+event->page_zero_size);
-      out_evt1->rip_vaddr  = event->address;
+      out_evt1->rip_vaddr  = event->address-event->page_zero_size;
       out_evt1->timestamp  = exe_timestamp;
       out_evt1->string     = module_path;
       out_evt1->tls_index  = event->tls_index;
