@@ -865,6 +865,23 @@ rb_thread_entry_point(void *p)
                 }
               }
             }
+            if(!got_exe && !got_dbg)
+            {
+              for(RB_FileNode *n = input_files_from_format_table[RB_FileFormat_MACHO].first; n != 0; n = n->next)
+              {
+                if(n->v->format_flags & RB_FileFormatFlag_HasDWARF)
+                {
+                  got_exe = 1;
+                  got_dbg = 1;
+                  dbg_name = n->v->path;
+                  dbg_data = n->v->data;
+                  exe_name = n->v->path;
+                  exe_data = n->v->data;
+                  exe_kind = ExecutableImageKind_Macho;
+                  break;
+                }
+              }
+            }
             if(!got_exe)
             {
               for(RB_FileNode *n = input_files_from_format_table[RB_FileFormat_ELF32].first; n != 0; n = n->next)
@@ -946,6 +963,18 @@ rb_thread_entry_point(void *p)
                 convert_params_2.raw = dw_input_from_elf_bin(scratch.arena, dbg_data, &bin);
                 convert_params_2.path_style = PathStyle_UnixAbsolute;
                 convert_params_2.binary_sections = e2r_rdi_binary_sections_from_elf_section_table(arena, dbg_data, &bin, &bin.shdrs);
+                scratch_end(scratch);
+              }break;
+              case ExecutableImageKind_Macho:
+              {
+                Temp scratch = scratch_begin(&arena, 1);
+                MACH_Bin mach_bin = mach_bin_read_from_file(scratch.arena, dbg_name);
+                convert_params_2.arch = Arch_arm64;
+                convert_params_2.base_vaddr = mach_compute_image_offset(mach_bin);
+                convert_params_2.raw = dw_input_from_mach_bin(scratch.arena, mach_bin, dbg_data);
+                convert_params_2.path_style = PathStyle_Relative;
+                // TODO(yuraiz): Implement binary sections
+                // convert_params_2.binary_sections = e2r_rdi_binary_sections_from_elf_section_table(arena, dbg_data, &bin, &bin.shdrs);
                 scratch_end(scratch);
               }break;
             }

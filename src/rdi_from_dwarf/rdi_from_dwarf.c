@@ -2782,14 +2782,6 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
         g_d2r_shared.binary_sections = e2r_rdi_binary_sections_from_elf_section_table(arena, params->dbg_data, &bin, &bin.shdrs);
       } break;
       case ExecutableImageKind_Macho: {
-        // TODO(yuraiz): Figure that out
-        MACH_Bin mach_bin = mach_bin_read_from_file(scratch.arena, params->dbg_name);
-        arch       = Arch_arm64;
-        image_base = 0;
-        input      = dw_input_from_mach_bin(scratch.arena, mach_bin, params->dbg_data);
-        path_style = PathStyle_Relative;
-      } break;
-      case ExecutableImageKind_Macho: {
         MACH_Bin mach_bin = mach_bin_read_from_file(scratch.arena, params->dbg_name);
         arch       = Arch_arm64;
         image_base = 0;
@@ -3045,7 +3037,7 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
     //////////////////////////////// 
     
     // NOTE(yuraiz): Moved to the heap because that variable can blow up the stack.
-    RDIM_Type **builtin_types = push_array(scratch.arena, RDIM_Type *, RDI_TypeKind_Count);
+    RDIM_Type **builtin_types = push_array(scratch.arena, RDIM_Type *, RDI_TypeKind_COUNT);
     for (RDI_TypeKind type_kind = RDI_TypeKind_FirstBuiltIn; type_kind <= RDI_TypeKind_LastBuiltIn; type_kind += 1) {
       RDIM_Type *type = rdim_type_chunk_list_push(arena, &g_d2r_shared.types, D2R_TYPE_CHUNK_CAP);
       type->kind      = type_kind;

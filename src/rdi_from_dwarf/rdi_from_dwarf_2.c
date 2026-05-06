@@ -3744,7 +3744,9 @@ d2r2_convert(Arena *arena, D2R2_ConvertParams *params)
                       case DW_ExprOp_BReg30: case DW_ExprOp_BReg31:
                       {
                         regcode_dw = (U64)(opcode - DW_ExprOp_BReg0);
-                        regval_off = operand_s64s[1];
+                        // NOTE(yuraiz): on macOS the operand count for DW_ExprOp_BReg31 is 1,
+                        // so getting the second operand is meaningless in that case.
+                        regval_off = operands_count == 1 ? operand_s64s[0] : operand_s64s[1];
                         regread_is_addr = 1;
                       }goto reg_read;
                       case DW_ExprOp_BRegX:
@@ -3765,7 +3767,6 @@ d2r2_convert(Arena *arena, D2R2_ConvertParams *params)
                           case Arch_COUNT:
                           {}break;
                           case Arch_arm32:
-                          case Arch_arm64:
                           case Arch_x86:
                           {
                             // TODO(rjf): unsupported architectures
@@ -3779,6 +3780,16 @@ d2r2_convert(Arena *arena, D2R2_ConvertParams *params)
                               DW_Regs_X64_XList
 #undef X
                             }
+                          case Arch_arm64:
+                          {
+                            switch(regcode_dw)
+                            {
+                              default:{}break;
+#define X(reg_dw, val_dw, reg_rdi, off, size) case DW_RegArm64_##reg_dw:{regcode_rdi = RDI_RegCodeArm64_##reg_rdi; reg_off = (off); reg_size = (size);}break;
+                              DW_Regs_Arm64_XList
+#undef X
+                            }
+                          }
                           }break;
                         }
                         

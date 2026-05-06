@@ -309,12 +309,8 @@ RDI_ArchTable:
 {
   {NULL    0     0}
   {X64     1     8}
-<<<<<<< HEAD
   {X86     2     4}
-||||||| parent of 6317e002 (Improve rdi arm64 support + fix RDI_EvalOp_RegRead dwarf conversion)
-=======
-  {Arm64   2     8}
->>>>>>> 6317e002 (Improve rdi arm64 support + fix RDI_EvalOp_RegRead dwarf conversion)
+  {Arm64   3     8}
 }
 
 @table(name value)

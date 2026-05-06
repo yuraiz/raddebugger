@@ -542,7 +542,6 @@ dmn_mac_module_alloc(DMN_MAC_Process *process, U64 load_address, U64 name_vaddr)
   // but in other's it should be just load_address.
   // That offset ctrl_thread__module_open magic detection, but is required for the correct symbol mapping.
   module->base_vaddr     = load_address;
-  module->page_zero_size = mach_compute_image_offset(info); 
   module->name_vaddr     = name_vaddr;
   module->size           = mach_compute_image_size(info);
   
@@ -922,7 +921,6 @@ dmn_mac_push_event_load_module(Arena *arena, DMN_EventList *events, DMN_MAC_Proc
   e->module          = dmn_mac_handle_from_module(module);
   e->arch            = process->ctx->arch;
   e->address         = module->base_vaddr;
-  e->page_zero_size  = module->page_zero_size;
   e->string          = push_str8_copy(arena, path);
   e->size            = module->size;
 

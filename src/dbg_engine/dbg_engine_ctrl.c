@@ -1936,7 +1936,7 @@ d_establish_frame_unwind_context__dwarf(Arena *arena, D_Handle process_handle, D
           case Arch_arm64:
           {
             // NOTE(yuraiz): I don't see how CTRL_MemoryReadContextDwarfX64 is specific to x64, it should work for arm64 too.
-            CTRL_MemoryReadContextDwarfX64 *mem_read_ctx_arm64 = push_array(scratch.arena, CTRL_MemoryReadContextDwarfX64, 1);
+            D_MemoryReadContextDwarfX64 *mem_read_ctx_arm64 = push_array(scratch.arena, D_MemoryReadContextDwarfX64, 1);
             mem_read_ctx_arm64->process_handle = process_handle;
             mem_read_ctx_arm64->endt_us        = endt_us;
             
@@ -2005,10 +2005,9 @@ d_unwind_step__dwarf(D_Handle process_handle, Arch arch, void *regs, D_FrameUnwi
       reg_read_func  = regs_read_dwarf_x64;
       reg_write_func = regs_write_dwarf_x64;
     }break;
-    case Arch_x86:
     case Arch_arm64:
     {
-      CTRL_MemoryReadContextDwarfX64 *mem_read_ctx_arm64 = push_array(scratch.arena, CTRL_MemoryReadContextDwarfX64, 1);
+      D_MemoryReadContextDwarfX64 *mem_read_ctx_arm64 = push_array(scratch.arena, D_MemoryReadContextDwarfX64, 1);
       mem_read_ctx_arm64->process_handle = process_handle;
       mem_read_ctx_arm64->endt_us        = endt_us;
       
@@ -2020,11 +2019,6 @@ d_unwind_step__dwarf(D_Handle process_handle, Arch arch, void *regs, D_FrameUnwi
       reg_read_func  = regs_read_dwarf_arm64;
       reg_write_func = regs_write_dwarf_arm64;
     }break;
-    case Arch_arm32:
-    {
-      NotImplemented;
-    }break;
-    default: { InvalidPath; }break;
   }
   
   // apply register rules to the context
@@ -2891,8 +2885,8 @@ d_unwind_step__pe_x64(D_Handle process_handle, D_Handle module_handle, U64 modul
   return result;
 }
 
-internal CTRL_UnwindStepResult
-ctrl_unwind_step__mac_arm64(CTRL_Handle process_handle, REGS_RegBlockARM64 *regs, U64 endt_us)
+internal D_UnwindStepResult
+ctrl_unwind_step__mac_arm64(D_Handle process_handle, REGS_RegBlockARM64 *regs, U64 endt_us)
 {
   //////////////////////////////
   // NOTE(yuraiz): From https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms
@@ -2914,7 +2908,7 @@ ctrl_unwind_step__mac_arm64(CTRL_Handle process_handle, REGS_RegBlockARM64 *regs
   }
   
   U128 stack_frame = {0};
-  if(is_good && !ctrl_process_memory_read_struct(process_handle, fp, &is_stale, &stack_frame, endt_us))
+  if(is_good && !d_process_memory_read_struct(process_handle, fp, &is_stale, &stack_frame, endt_us))
   {
     is_good = false;
   }
@@ -2925,9 +2919,9 @@ ctrl_unwind_step__mac_arm64(CTRL_Handle process_handle, REGS_RegBlockARM64 *regs
   regs->pc.u64 = stack_frame.u64[1];
   regs->sp.u64 = fp;
 
-  CTRL_UnwindStepResult result = {0};
-  if(!is_good) {result.flags |= CTRL_UnwindFlag_Error;}
-  if(is_stale) {result.flags |= CTRL_UnwindFlag_Stale;}
+  D_UnwindStepResult result = {0};
+  if(!is_good) {result.flags |= D_UnwindFlag_Error;}
+  if(is_stale) {result.flags |= D_UnwindFlag_Stale;}
   return result;
 }
 
@@ -4048,10 +4042,13 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, Rng1U64 vaddr_rang
     // rust, for example, doesn't generate dsym by default, but the binary 
     // contains references to object files that contain debug info. dsymutil
     // can pack that debug info into dsym bundle.
-    String8 system_lib_prefix = str8_lit("/usr/lib/");
+    String8 usr_lib_prefix = str8_lit("/usr/lib/");
+    String8 system_lib_prefix = str8_lit("/System/Library/");
+    B32 is_library = str8_match(str8_prefix(path, usr_lib_prefix.size), usr_lib_prefix, 0) ||
+                     str8_match(str8_prefix(path, system_lib_prefix.size), system_lib_prefix, 0);
     if(dsym_dbg_path.str == 0 &&
        header.filetype & MH_EXECUTE &&
-       !str8_match(str8_prefix(path, system_lib_prefix.size), system_lib_prefix, 0))
+       !is_library)
     {
       //- yuraiz: check if the binary contains references to object symbols, it means that we can try generating .dSYM
       B32 try_dsymutil = 0;
@@ -4559,9 +4556,8 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       out_evt1->parent     = process_handle;
       out_evt1->arch       = event->arch;
       out_evt1->entity_id  = event->code;
-      // TODO(yuraiz): pass page_zero_size further, it isn't actually needed here
-      out_evt1->vaddr_rng  = r1u64(event->address-event->page_zero_size, event->address+event->size+event->page_zero_size);
-      out_evt1->rip_vaddr  = event->address-event->page_zero_size;
+      out_evt1->vaddr_rng  = r1u64(event->address, event->address+event->size);
+      out_evt1->rip_vaddr  = event->address;
       out_evt1->timestamp  = exe_timestamp;
       out_evt1->string     = module_path;
       out_evt1->tls_index  = event->tls_index;
