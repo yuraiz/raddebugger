@@ -1086,8 +1086,6 @@ dmn_mac_event_create_process(Arena *arena, DMN_EventList *events, pid_t pid, DMN
   // push events
   dmn_mac_push_event_create_process(arena, events, process);
 
-  dmn_mac_push_event_handshake_complete(arena, events, process);
-  
   return process;
 }
 
@@ -1164,6 +1162,8 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
         struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
         mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
 
+        B32 is_first_module = process->ctx->first_module == 0;
+
         mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
 
         // NOTE(yuraiz): For some reason dyld notifies about the main module multiple times.
@@ -1186,6 +1186,12 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
           {
             dmn_mac_event_load_module(arena, events, process, load_address, name_vaddr);
           }
+        }
+
+        // the process, the main thread, and the main module are now created
+        if(is_first_module)
+        {
+          dmn_mac_push_event_handshake_complete(arena, events, process);
         }
       }break;
       case dyld_image_removing:
