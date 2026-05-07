@@ -2,5 +2,7 @@
 /local/
 *~
 .vs
+project.xcworkspace/
+xcuserdata/
 tags
 .DS_Store
