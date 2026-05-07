@@ -674,7 +674,7 @@ os_make_directory(String8 path)
   Temp scratch = scratch_begin(0, 0);
   B32 result = 0;
   String8 path_copy = push_str8_copy(scratch.arena, path);
-  if(mkdir((char *)path_copy.str, 0755) != -1)
+  if(mkdir((char *)path_copy.str, 0755) != -1 || errno == EEXIST)
   {
     result = 1;
   }
@@ -738,10 +738,9 @@ os_shared_memory_view_close(OS_Handle handle, void *ptr, Rng1U64 range)
 internal U64
 os_now_microseconds(void)
 {
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC, &t);
-  U64 result = t.tv_sec*Million(1) + (t.tv_nsec/Thousand(1));
-  return result;
+  // brt: NOTE: this clock source cannot be changed or all of pthreads waits will not work...
+  uint64_t result = clock_gettime_nsec_np(CLOCK_REALTIME);
+  return result / 1000;
 }
 
 internal U32
@@ -1210,9 +1209,14 @@ internal Semaphore
 os_semaphore_alloc(U32 initial_count, U32 max_count, String8 name)
 {
   Temp scratch = scratch_begin(0, 0);
-  Semaphore result = {0};
+  OS_MAC_Entity *entity = 0;
   if(name.size > 0)
   {
+    if (name.size > 25)
+    {
+      U64 trim = name.size - 25;
+      name = str8_skip(name, trim);
+    }
     for EachIndex(attempt_idx, 64)
     {
       String8 name_copy = str8_copy(scratch.arena, name);
@@ -1223,96 +1227,150 @@ os_semaphore_alloc(U32 initial_count, U32 max_count, String8 name)
       }
       if(s != SEM_FAILED)
       {
-        result.u64[0] = (U64)s;
+        entity = os_mac_entity_alloc(OS_MAC_EntityKind_NamedSemaphore);
+        entity->named_semaphore = s;
         break;
       }
     }
   }
   else
   {
-    sem_t *s = mmap(0, sizeof(*s), PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-    AssertAlways(s != MAP_FAILED);
-    int err = sem_init(s, 0, initial_count);
-    if(err == 0)
+    dispatch_semaphore_t s = dispatch_semaphore_create(initial_count);
+    if (s != 0)
     {
-      result.u64[0] = (U64)s;
+      entity = os_mac_entity_alloc(OS_MAC_EntityKind_Semaphore);
+      entity->semaphore = s;
     }
   }
   scratch_end(scratch);
+  Semaphore result = {IntFromPtr(entity)};
   return result;
 }
 
 internal void
 os_semaphore_release(Semaphore semaphore)
 {
-  int err = munmap((void*)semaphore.u64[0], sizeof(sem_t));
-  AssertAlways(err == 0);
+  OS_MAC_Entity *entity = (OS_MAC_Entity*)PtrFromInt(semaphore.u64[0]);
+  if(entity != 0 && entity->kind == OS_MAC_EntityKind_NamedSemaphore)
+  {
+    int err = munmap(entity->named_semaphore, sizeof(sem_t));
+    AssertAlways(err == 0);
+  }
+  if(entity != 0 && entity->kind == OS_MAC_EntityKind_Semaphore)
+  {
+    dispatch_release(entity->semaphore);
+  }
 }
 
 internal Semaphore
 os_semaphore_open(String8 name)
 {
-  Semaphore result = {0};
+  OS_MAC_Entity *entity = 0;
   {
     Temp scratch = scratch_begin(0, 0);
+    if (name.size > 25)
+    {
+      U64 trim = name.size - 25;
+      name = str8_skip(name, trim);
+    }
     String8 name_copy = str8_copy(scratch.arena, name);
     sem_t *s = sem_open((char *)name_copy.str, 0);
     if(s != SEM_FAILED)
     {
-      result.u64[0] = (U64)s;
+      entity = os_mac_entity_alloc(OS_MAC_EntityKind_NamedSemaphore);
+      entity->named_semaphore = s;
     }
     scratch_end(scratch);
   }
+  Semaphore result = {IntFromPtr(entity)};
   return result;
 }
 
 internal void
 os_semaphore_close(Semaphore semaphore)
 {
-  sem_t *s = (sem_t *)semaphore.u64[0];
-  sem_close(s);
+  OS_MAC_Entity *entity = (OS_MAC_Entity*)PtrFromInt(semaphore.u64[0]);
+  if(entity != 0 && entity->kind == OS_MAC_EntityKind_NamedSemaphore)
+  {
+    sem_close(entity->named_semaphore);
+  }
 }
 
 internal B32
 os_semaphore_take(Semaphore semaphore, U64 endt_us)
 {
-  // TODO(rjf): we need to use `sem_timedwait` here.
-  // called with different endt_us at raddbg_main.c:631:16
-  // AssertAlways(endt_us == max_U64);
-  for(;;)
+  B32 result = 1;
+  OS_MAC_Entity *entity = (OS_MAC_Entity*)PtrFromInt(semaphore.u64[0]);
+  if(entity != 0 && entity->kind == OS_MAC_EntityKind_NamedSemaphore)
   {
-    int err = sem_wait((sem_t*)semaphore.u64[0]);
-    if(err == 0)
+    // TODO(rjf): we need to use `sem_timedwait` here.
+    // called with different endt_us at raddbg_main.c:631:16
+    // AssertAlways(endt_us == max_U64);
+    for(;;)
     {
+      int err = sem_wait(entity->named_semaphore);
+      if(err == 0)
+      {
+        break;
+      }
+      else if(errno == EAGAIN)
+      {
+        continue;
+      }
       break;
     }
-    else if(errno == EAGAIN)
-    {
-      continue;
-    }
-    break;
   }
-  return 1;
+
+  else if(entity != 0 && entity->kind == OS_MAC_EntityKind_Semaphore)
+  {
+    dispatch_time_t deadline = DISPATCH_TIME_NOW;
+    if (endt_us == max_U64)
+    {
+      deadline = DISPATCH_TIME_FOREVER;
+    }
+    else
+    {
+      struct timespec endt_timespec;
+      endt_timespec.tv_sec = endt_us/Million(1);
+      endt_timespec.tv_nsec = Thousand(1) * (endt_us - (endt_us/Million(1))*Million(1));
+      deadline = dispatch_walltime(&endt_timespec, 0);
+    }
+
+    if (dispatch_semaphore_wait(entity->semaphore, deadline) != 0)
+    {
+      result = 0;
+    }
+  }
+  return result;
 }
 
 internal void
 os_semaphore_drop(Semaphore semaphore)
 {
-  for(;;)
+  OS_MAC_Entity *entity = (OS_MAC_Entity*)PtrFromInt(semaphore.u64[0]);
+  if(entity != 0 && entity->kind == OS_MAC_EntityKind_NamedSemaphore)
   {
-    int err = sem_post((sem_t*)semaphore.u64[0]);
-    if(err == 0)
+    for(;;)
     {
+      int err = sem_post(entity->named_semaphore);
+      if(err == 0)
+      {
+        break;
+      }
+      else
+      {
+        if(errno == EAGAIN)
+        {
+          continue;
+        }
+      }
       break;
     }
-    else
-    {
-      if(errno == EAGAIN)
-      {
-        continue;
-      }
-    }
-    break;
+  }
+
+  else if(entity != 0 && entity->kind == OS_MAC_EntityKind_Semaphore)
+  {
+    dispatch_semaphore_signal(entity->semaphore);
   }
 }
 

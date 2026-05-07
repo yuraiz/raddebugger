@@ -27,6 +27,16 @@
 #include <time.h>
 #include <unistd.h>
 
+#define nil nil
+#undef internal
+#undef global
+#define os_release os_release_object
+# include <dispatch/dispatch.h>
+#undef nil
+#define internal static
+#define global static
+#undef os_release
+
 pid_t gettid(void);
 
 extern char **environ;
@@ -137,6 +147,8 @@ typedef enum OS_MAC_EntityKind
   OS_MAC_EntityKind_Mutex,
   OS_MAC_EntityKind_RWMutex,
   OS_MAC_EntityKind_ConditionVariable,
+  OS_MAC_EntityKind_Semaphore,
+  OS_MAC_EntityKind_NamedSemaphore,
   OS_MAC_EntityKind_Barrier,
 }
 OS_MAC_EntityKind;
@@ -161,6 +173,8 @@ struct OS_MAC_Entity
       pthread_cond_t cond_handle;
       pthread_mutex_t rwlock_mutex_handle;
     } cv;
+    dispatch_semaphore_t semaphore;
+    sem_t *named_semaphore;
     struct {
       pthread_mutex_t mutex;
       pthread_cond_t cond;
