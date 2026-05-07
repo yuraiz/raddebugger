@@ -193,18 +193,13 @@ os_get_current_path(Arena *arena)
 internal U32
 os_get_process_start_time_unix(void)
 {
-  Temp scratch = scratch_begin(0,0);
-  U64 start_time = 0;
-  pid_t pid = getpid();
-  String8 path = push_str8f(scratch.arena, "/proc/%u", pid);
-  struct stat st;
-  int err = stat((char *)path.str, &st);
-  if(err == 0)
-  {
-    start_time = st.st_mtime;
-  }
-  scratch_end(scratch);
-  return (U32)start_time;
+  struct kinfo_proc info = {0};
+  size_t len = sizeof(info);  
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
+  
+  sysctl(mib, 4, &info, &len, NULL, 0);
+
+  return info.kp_proc.p_starttime.tv_sec;
 }
 
 ////////////////////////////////
