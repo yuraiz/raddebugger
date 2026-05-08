@@ -371,16 +371,6 @@ d_trap_net_from_thread__step_over_line(Arena *arena, D_Entity *thread)
       rng1u64_list_push(scratch.arena, &all_vaddr_ranges_on_same_line, vaddr_range);
     }
   }
-  
-  // TODO(yuraiz): fix that problem somehow differently, either fix that in the conversion or check the second converter version.
-  // NOTE(yuraiz): conversion from dwarf info produces separate ranges that actually go one by one.
-  for EachNode(n, Rng1U64Node, all_vaddr_ranges_on_same_line.first)
-  {
-    if(line_vaddr_rng.max == n->v.min)
-    {
-      line_vaddr_rng.max = n->v.max;
-    }
-  }
 
   // rjf: opl line_vaddr_rng -> 0xf00f00 or 0xfeefee? => include in line vaddr range
   //
@@ -590,16 +580,6 @@ d_trap_net_from_thread__step_into_line(Arena *arena, D_Entity *thread)
       Rng1U64 voff_range = n->v.voff_range;
       Rng1U64 vaddr_range = d_vaddr_range_from_voff_range(module, voff_range);
       rng1u64_list_push(scratch.arena, &all_vaddr_ranges_on_same_line, vaddr_range);
-    }
-  }
-
-  // TODO(yuraiz): fix that problem somehow differently, either fix that in the conversion or check the second converter version.
-  // NOTE(yuraiz): conversion from dwarf info produces separate ranges that actually go one by one.
-  for EachNode(n, Rng1U64Node, all_vaddr_ranges_on_same_line.first)
-  {
-    if(line_vaddr_rng.max == n->v.min)
-    {
-      line_vaddr_rng.max = n->v.max;
     }
   }
 
@@ -916,12 +896,12 @@ d_lines_array_from_dbgi_key_file_path_line_range(Arena *arena, DI_Key dbgi_key, 
         D_LineList *list = &array.v[line_idx];
         U32 voff_count = 0;
         U64 *voffs = rdi_line_voffs_from_num(&line_map, u32_from_u64_saturate((U64)line_num), &voff_count);
-        // NOTE(yuraiz): Initially the limit was 8, but if converting from dwarf you can gen much more offsets.
-        if(voff_count > 32)
+        // NOTE(yuraiz): the limit shouldn't be exceeded.
+        if(voff_count > 8)
         {
           Assert(0 && "line voff limit exceeded");
         }
-        if(lines_num_voffs[line_idx] < 32) ProfScope("iterate voffs (%i)", voff_count) for(U64 idx = 0; idx < voff_count; idx += 1)
+        if(lines_num_voffs[line_idx] < 8) ProfScope("iterate voffs (%i)", voff_count) for(U64 idx = 0; idx < voff_count; idx += 1)
         {
           U64 base_voff = voffs[idx];
           U64 unit_idx = rdi_vmap_idx_from_section_kind_voff(rdi, RDI_SectionKind_UnitVMap, base_voff);
@@ -942,7 +922,7 @@ d_lines_array_from_dbgi_key_file_path_line_range(Arena *arena, DI_Key dbgi_key, 
             SLLQueuePush(list->first, list->last, n);
             list->count += 1;
             lines_num_voffs[line_idx] += 1;
-            if(lines_num_voffs[line_idx] >= 32)
+            if(lines_num_voffs[line_idx] >= 8)
             {
               break;
             }

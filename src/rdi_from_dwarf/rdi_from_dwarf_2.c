@@ -1115,7 +1115,33 @@ d2r2_convert(Arena *arena, D2R2_ConvertParams *params)
             }
             seq_voffs[seq_line_count] = vm_regs.address - base_vaddr;
           }
-          
+
+          // NOTE(yuraiz): clang generates dwarf info with columns, and as I understand currently
+          // columns aren't handled correctly by the debugger, so just join the offset ranges for now.
+          // 
+          // What I mean by "columns aren't handled correctly":
+          // - seq_cols here are in the invalid format anyway.
+          // - the column count isn't handled in rdi_make_local.
+          {
+            U64 new_line_count = 0;
+            U64 idx = 0;
+            while(idx < seq_line_count - 1)
+            {
+              while(seq_lines[new_line_count] != seq_lines[idx])
+              {
+                new_line_count += 1;
+              }
+              while(seq_lines[new_line_count] == seq_lines[idx])
+              {
+                seq_voffs[new_line_count + 1] = seq_voffs[idx + 1];
+                seq_lines[new_line_count + 1] = seq_lines[idx + 1];
+                idx += 1;
+              }
+            }
+            
+            seq_line_count = new_line_count;
+          }
+
           // rjf: push sequence to line table
           RDIM_LineSequence *seq = rdim_line_table_push_sequence(arena, dst_line_tables, dst_line_table, line_seq_src_file, seq_voffs, seq_lines, seq_cols, seq_line_count);
           
