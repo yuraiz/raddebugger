@@ -10,6 +10,9 @@
 #if !defined(PROFILE_TELEMETRY)
 # define PROFILE_TELEMETRY 0
 #endif
+#if !defined(PROFILE_INSTRUMENTS)
+# define PROFILE_INSTRUMENTS 0
+#endif
 #if !defined(PROFILE_SPALL)
 # define PROFILE_SPALL 0
 #endif
@@ -22,6 +25,11 @@
 # if OS_WINDOWS
 #  pragma comment(lib, "ws2_32.lib")
 #  pragma comment(lib, "rad_tm_win64.lib")
+# endif
+#elif PROFILE_INSTRUMENTS
+# if OS_MAC
+# else
+#  #error Unsupported OS
 # endif
 #elif PROFILE_SPALL
 # include "spall.h"
@@ -65,6 +73,47 @@ hash = TM_API_PTR->_tmSendDynamicString(hash, (char*)string.str);              \
 TM_API_PTR->_tmMessageFast_Core(0, TMMF_ICON_NOTE, file_id, __LINE__, hash);   \
 scratch_end(scratch);                                                          \
 }
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+//~ brt: Instruments Profile Defines
+
+#if PROFILE_INSTRUMENTS
+#define nil nil
+#undef internal
+#undef global
+#define os_release os_release_object
+#include <os/signpost.h>
+#undef nil
+#define internal static
+#define global static
+#undef os_release
+
+global os_log_t instruments_log;
+thread_static U64 instruments_stack_size;
+thread_static U64 instruments_stack_idx;
+thread_static os_signpost_id_t *instruments_stack;
+internal inline os_signpost_id_t instruments_signpost_push( void );
+internal inline os_signpost_id_t instruments_signpost_pop( void );
+internal inline void instruments_begin( char *fmt, ... );
+internal inline void instruments_end( void );
+# define ProfBegin(...)         (instruments_begin(__VA_ARGS__), 0)
+# define ProfBeginDynamic(...)  (instruments_begin(__VA_ARGS__), 0)
+# define ProfEnd(...)           (instruments_end(), 0)
+# define ProfTick(...)          (0)
+# define ProfIsCapturing(...)   (0)
+# define ProfBeginCapture(...)  (0)
+# define ProfEndCapture(...)    (0)
+# define ProfFlush(...)         (0)
+# define ProfThreadName(...)    (0)
+# define ProfMsg(...)           (0)
+# define ProfBeginLockWait(...) (0)
+# define ProfEndLockWait(...)   (0)
+# define ProfLockTake(...)      (0)
+# define ProfLockDrop(...)      (0)
+# define ProfColor(...)         (0)
+# define ProfBeginV(...)        (0)
+# define ProfNoteV(...)         (0)
 #endif
 
 ////////////////////////////////

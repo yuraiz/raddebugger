@@ -16,6 +16,7 @@ echo "[clang compile]"
 
 # --- Unpack Command Line Build Arguments -------------------------------------
 auto_compile_flags=''
+if [ -n "${instruments+x}" ]; then auto_compile_flags="$auto_compile_flags -DPROFILE_INSTRUMENTS=1" && echo "[instruments profiling enabled]"; fi
 
 # --- Get Current Git Commit Id -----------------------------------------------
 git_hash=$(git describe --always --dirty)

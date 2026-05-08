@@ -27,7 +27,7 @@
 /* Begin PBXLegacyTarget section */
 		8B6CB2462FAC9E410034F027 /* raddbg */ = {
 			isa = PBXLegacyTarget;
-			buildArgumentsString = raddbg;
+			buildArgumentsString = "instruments raddbg";
 			buildConfigurationList = 8B6CB2472FAC9E410034F027 /* Build configuration list for PBXLegacyTarget "raddbg" */;
 			buildPhases = (
 			);

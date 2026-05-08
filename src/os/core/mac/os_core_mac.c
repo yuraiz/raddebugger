@@ -4,6 +4,8 @@
 ////////////////////////////////
 //~ rjf: Helpers
 
+extern int _NSGetExecutablePath(char* buf, uint32_t* bufsize);
+
 internal U32
 os_mac_get_logical_processor_count()
 {
@@ -1606,7 +1608,7 @@ main(int argc, char **argv)
         // rjf: get self string
         B32 got_final_result = 0;
         U8 *buffer = 0;
-        int size = 0;
+        U32 size = 0;
         for(S64 cap = PATH_MAX, r = 0; r < 4; cap *= 2, r += 1)
         {
           scratch_end(scratch);

@@ -29,6 +29,11 @@ main_thread_base_entry_point(int arguments_count, char **arguments)
   tmSetMaxThreadCount(256);
   tmInitialize(sizeof(tm_data), tm_data);
 #endif
+
+  //- brt: set up instruments
+#if PROFILE_INSTRUMENTS
+  instruments_log = os_log_create("com.raddbg.debug", "profile");
+#endif
   
   //- rjf: set up spall
 #if PROFILE_SPALL
