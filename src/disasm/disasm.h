@@ -29,6 +29,7 @@ enum
   DASM_InstFlag_Repeats                     = (1<<5),
   DASM_InstFlag_ChangesStackPointer         = (1<<6),
   DASM_InstFlag_ChangesStackPointerVariably = (1<<7),
+  DASM_InstFlag_PushesArm64StackFrame       = (1<<8),
 };
 
 typedef struct DASM_Inst DASM_Inst;
