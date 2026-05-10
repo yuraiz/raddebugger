@@ -4476,7 +4476,7 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       {
         spoof_arch = dmn_arch_from_thread(spoof->thread);
         size_of_spoof = bit_size_from_arch(spoof_arch)/8;
-        if(spoof_arch != Arch_arm64)
+        if(spoof->vaddr != 0)
         {
           dmn_process_read(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof_old_ip_value);
         }
@@ -4485,9 +4485,9 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       // rjf: set spoof
       if(do_spoof) ProfScope("set spoof")
       {
-        if(spoof_arch == Arch_arm64)
+        if(spoof_arch == Arch_arm64 && spoof->vaddr == 0)
         {
-          // NOTE(yuraiz): we do spoof right after the call instruction, so we can assume lr is valid
+          // NOTE(yuraiz): we do spoof right after the bl instruction, and we're in a leaf function, so we can assume lr is valid
           REGS_RegBlockARM64 reg_block = {0};
           dmn_thread_read_reg_block(spoof->thread, &reg_block);
           spoof_old_ip_value = reg_block.lr.u64;
@@ -4548,7 +4548,11 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       // rjf: unset spoof
       if(do_spoof) ProfScope("unset spoof")
       {
-        if (spoof_arch != Arch_arm64)
+        if(spoof_arch == Arch_arm64 && spoof->vaddr == 0)
+        {
+          // do nothing
+        }
+        else
         {
           dmn_process_write(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof_old_ip_value);
         }
@@ -4569,6 +4573,12 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
     if(spoof_thread_rip == spoof->new_ip_value)
     {
       regs_arch_block_write_rip(arch, regs_block, spoof_old_ip_value);
+      if(arch == Arch_arm64)
+      {
+        // restore the link register
+        REGS_RegBlockARM64* regs_arm64 = regs_block;
+        regs_arm64->lr.u64 = spoof_old_ip_value;
+      }
       d_thread_write_reg_block(d_handle_make(D_MachineID_Local, spoof->thread), regs_block);
     }
   }
@@ -6318,12 +6328,25 @@ d_ctrl_thread__run(DMN_CtrlCtx *ctrl_ctx, D_Msg *msg)
           spoof.thread  = target_thread.dmn_handle;
           spoof.vaddr   = spoof_sp;
           spoof.new_ip_value = spoof_ip_vaddr;
-          // TODO(yuraiz): on arm64 the return address is stored at sp + 8.
-          // but we use the link register to support leaf functions.
-          // make sure using it safe and we don't need to use the unwind info instead.
           if (dmn_arch_from_thread(target_thread.dmn_handle) == Arch_arm64)
           {
-            spoof.vaddr += 8;
+            // NOTE(yuraiz): spoof for arm64 implementation details:
+            // for regular functions the traps are set past the stp fp, lr instruction.
+            // at that moment the new stack frame is created and fp is updated, the return address is stored at fp + 8.
+            //
+            // otherwise it's assumed to be a leaf function and lr is used directly.
+            //
+            // TODO(yuraiz): might as well be a dyld external call.
+            if(hit_trap_flags & D_TrapFlag_SaveStackPointer)
+            {
+              REGS_RegBlockARM64 reg_block = {0};
+              dmn_thread_read_reg_block(spoof.thread, &reg_block);
+              spoof.vaddr = reg_block.fp.u64 + 8;
+            }
+            else
+            {
+              spoof.vaddr = 0;
+            }
           }
           log_infof("spoof:{process:[0x%I64x], thread:[0x%I64x], vaddr:0x%I64x, new_ip_value:0x%I64x}\n", spoof.process.u64[0], spoof.thread.u64[0], spoof.vaddr, spoof.new_ip_value);
         }

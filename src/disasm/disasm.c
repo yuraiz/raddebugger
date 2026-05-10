@@ -158,7 +158,7 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
 
         // NOTE(yuraiz): Can be the jump destination, can be just an address
         U64 label_addr = 0;
-        Register first_reg = REG_NONE;
+        Register regs[4] = {0};
         for EachIndex(i, MAX_OPERANDS)
         {
           if(instr.operands[i].operandClass == LABEL)
@@ -167,14 +167,14 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
           }
           if(instr.operands[i].operandClass == REG)
           {
-            if(i == 0)
+            if(i < ArrayCount(regs))
             {
-              first_reg = instr.operands[i].reg[0];
+              regs[i] = instr.operands[i].reg[0];
             } 
           }
         }
 
-        if(first_reg == REG_SP)
+        if(regs[0] == REG_SP)
         {
           flags |= DASM_InstFlag_ChangesStackPointer;
           // TODO(yuraiz): That's mostly lying, check for the immediate operand
@@ -276,8 +276,17 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
               flags |= DASM_InstFlag_Return;
             }break;
 
-            // store/load fp and lr and increment/decrement sp
+            // store register pair and increment sp
             case ARM64_STP:
+            {
+              flags |= DASM_InstFlag_ChangesStackPointer;
+              // stp fp, lr, [sp, #0x20]
+              if(regs[0] == REG_X29 && regs[1] == REG_X30)
+              {
+                flags |= DASM_InstFlag_PushesArm64StackFrame;
+              }
+            }break;
+            // load register pair and decrement sp
             case ARM64_LDP:
             {
               flags |= DASM_InstFlag_ChangesStackPointer;
@@ -314,6 +323,10 @@ dasm_inst_from_code(Arena *arena, Arch arch, U64 vaddr, String8 code, DASM_Synta
         }
         if(flags & DASM_InstFlag_ChangesStackPointerVariably) {
           str8_list_push(arena, &flag_list, str8_lit("sp/var"));
+        }
+        if(flags & DASM_InstFlag_PushesArm64StackFrame)
+        {
+          str8_list_push(arena, &flag_list, str8_lit("s/frame"));
         }
 
         StringJoin flags_join = {0};
