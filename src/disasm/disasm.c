@@ -381,6 +381,127 @@ dasm_ctrl_flow_info_from_arch_vaddr_code(Arena *arena, DASM_InstFlags exit_point
   return info;
 }
 
+internal DASM_CtrlFlowSearchResult
+dasm_ctrl_flow_compute_function_body_vaddr_step(DASM_CtrlFlowPoint start_point, Arch arch, U64 vaddr, String8 code)
+{
+  Temp scratch = scratch_begin(0, 0);
+
+  U64 memory_request_size = sizeof(U32) * 16;
+
+  DASM_CtrlFlowSearchResult result = {0};
+  switch(arch)
+  {
+    default:
+    {
+      result.v = start_point;
+      result.finish = 1;
+    }break;
+    case Arch_arm64:
+    {
+      //- yuraiz: the caller didn't read the memory yet, request the initial batch
+      if(code.size == 0)
+      {
+        result.request_range = rng_1u64(start_point.jump_dest_vaddr, start_point.jump_dest_vaddr + memory_request_size);
+      }
+
+      //- yuraiz: the memory argument is a single pointer, ask to read the memory from the pointer
+      else if(code.size == sizeof(U64))
+      {
+        U64 jump_dest_vaddr = *(U64*)code.str;
+        result.request_range = rng_1u64(jump_dest_vaddr, jump_dest_vaddr + memory_request_size);
+      }
+
+      //- yuraiz: analyze the code instructions
+      else
+      {
+        B32 follow_external_call = 0;
+
+        for(U64 offset = 0; offset < code.size;)
+        {
+          DASM_Inst inst = dasm_inst_from_code(scratch.arena, arch, vaddr+offset, str8_skip(code, offset), DASM_Syntax_Intel);
+          U64 inst_vaddr = vaddr+offset;
+          offset += inst.size;
+
+          //- yuraiz: got to the ret instruction, that's a leaf instruction
+          if(inst.flags & DASM_InstFlag_Return)
+          {
+            result.v = start_point;
+            result.finish = 1;
+            break;
+          }
+
+          //- yuraiz: got to the stp instruction, the breakpoint to step over the call must be set after that instruction
+          if(inst.flags & DASM_InstFlag_PushesArm64StackFrame)
+          {
+            result.v.inst_flags = inst.flags;
+            result.v.vaddr = inst_vaddr;
+            result.v.jump_dest_vaddr = inst.jump_dest_vaddr;
+            result.finish = 1;
+            break;
+          }
+
+          //- yuraiz: the function just jumps, possibly a dyld external call
+          if(inst.flags & DASM_InstFlag_UnconditionalJump)
+          {
+            follow_external_call = 1;
+            break;
+          }
+
+          //- yuraiz: invalid memory
+          if(*(U32*)code.str == 0)
+          {
+            result.v = start_point;
+            result.finish = 1;
+            break;
+          }
+        }
+
+        //- yuraiz: compute the external function address
+        if(follow_external_call)
+        {
+          // NOTE(yuraiz) Example of dyld external call:
+          // adrp	x16, 0x1029ac000 // address of the page that contains the function address.
+          // ldr	x16, [x16, #0x10] // that's the address of the function we must inspect to set a trap in.
+          // br	x16
+          // 
+          // It always looks basically the same so it isn't hard to analyze.
+
+          // disasm the code
+          Instruction adrp = {0};
+          aarch64_decompose(*(U32*)code.str + sizeof(U32) * 0, &adrp, vaddr + sizeof(U32) * 0);
+          Instruction ldr = {0};
+          aarch64_decompose(*(U32*)(code.str + sizeof(U32) * 1), &ldr, vaddr + sizeof(U32) * 1);
+          Instruction br = {0};
+          aarch64_decompose(*(U32*)(code.str + sizeof(U32) * 2), &br, vaddr + sizeof(U32) * 2);
+
+          // ensure that instructions are what we expect
+          B32 is_external_call = (adrp.operation == ARM64_ADRP && ldr.operation == ARM64_LDR && br.operation == ARM64_BR);
+          if(is_external_call)
+          {
+            // compute the address of the external function pointer in the table
+            U64 adrp_operand = adrp.operands[1].immediate;
+            U64 ldr_operand  = ldr.operands[1].immediate;
+            U64 external_pointer_vaddr = adrp_operand + ldr_operand;
+            
+            // request the caller loop to read the pointer at the address
+            result.request_range = rng_1u64(external_pointer_vaddr, external_pointer_vaddr + sizeof(U64));
+          }
+        }
+      }
+    }break;
+  }
+  scratch_end(scratch);
+
+  if(result.request_range.min == 0 && !result.finish)
+  {
+    // failed find the target instruction, request to read another memory block
+    U64 next_vaddr = vaddr + code.size;
+    result.request_range = rng_1u64(next_vaddr, next_vaddr + memory_request_size);
+  }
+
+  return result;
+}
+
 ////////////////////////////////
 //~ rjf: Parameter Type Functions
 
