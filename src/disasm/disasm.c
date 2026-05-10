@@ -381,6 +381,103 @@ dasm_ctrl_flow_info_from_arch_vaddr_code(Arena *arena, DASM_InstFlags exit_point
   return info;
 }
 
+internal DASM_CtrlFlowSearchResult
+dasm_ctrl_flow_compute_function_body_vaddr_step(DASM_CtrlFlowPoint start_point, Arch arch, U64 vaddr, String8 code)
+{
+  printf("comp addr\n");
+  Temp scratch = scratch_begin(0, 0);
+
+  DASM_CtrlFlowSearchResult result = {0};
+  switch(arch)
+  {
+    default:
+    {
+      result.v = start_point;
+      result.finish = 1;
+    }break;
+    case Arch_arm64:
+    {
+      if(code.size == 0)
+      {
+        printf("request range\n");
+        result.request_range = rng_1u64(start_point.jump_dest_vaddr, start_point.jump_dest_vaddr + sizeof(U64) * 16);
+      }
+      else if(code.size == sizeof(U64))
+      {
+        printf("follow pointer\n");
+        U64 jump_dest_vaddr = *(U64*)code.str;
+        result.request_range = rng_1u64(jump_dest_vaddr, jump_dest_vaddr + sizeof(U64) * 16);
+      }
+      else
+      {
+        printf("disasm range\n");
+
+        B32 follow_external_call = 0;
+
+        for(U64 offset = 0; offset < code.size;)
+        {
+          DASM_Inst inst = dasm_inst_from_code(scratch.arena, arch, vaddr+offset, str8_skip(code, offset), DASM_Syntax_Intel);
+          U64 inst_vaddr = vaddr+offset;
+          offset += inst.size;
+
+          printf("intr: %s\n", inst.string.str);
+
+          if(inst.flags & DASM_InstFlag_Return)
+          {
+            result.v = start_point;
+            result.finish = 1;
+            break;
+          }
+
+          if(inst.flags & DASM_InstFlag_PushesArm64StackFrame)
+          {
+            result.v.inst_flags = inst.flags;
+            result.v.vaddr = inst_vaddr;
+            result.v.jump_dest_vaddr = inst.jump_dest_vaddr;
+            result.finish = 1;
+            break;
+          }
+
+          if(inst.flags & DASM_InstFlag_UnconditionalJump)
+          {
+            follow_external_call = 1;
+            // Assert(offset == sizeof(U32) * 2 && "Follows external call convention");
+            break;
+          }
+        }
+
+        if(follow_external_call)
+        {
+          
+          // TODO(yuraiz): Read additional information from the instruction.
+          Instruction adrp = {0};
+          aarch64_decompose(*(U32*)code.str, &adrp, vaddr);
+          Instruction ldr = {0};
+          aarch64_decompose(*(U32*)(code.str + sizeof(U32)), &ldr, vaddr + sizeof(U32));
+
+          U64 adrp_operand = adrp.operands[1].immediate;
+          U64 ldr_operand  = ldr.operands[1].immediate;
+
+          U64 jump_vaddr_location = adrp_operand + ldr_operand;
+
+          result.request_range = rng_1u64(jump_vaddr_location, jump_vaddr_location + sizeof(U64));
+
+          printf("external call %p\n", jump_vaddr_location);
+        }
+      }
+    }break;
+  }
+  scratch_end(scratch);
+
+  if(result.request_range.min == 0 && !result.finish)
+  {
+    result.v = start_point;
+    result.finish = 1;
+  }
+
+  return result;
+}
+
 ////////////////////////////////
 //~ rjf: Parameter Type Functions
 

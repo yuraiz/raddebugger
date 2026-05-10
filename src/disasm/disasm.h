@@ -74,6 +74,14 @@ struct DASM_CtrlFlowInfo
   U64 total_size;
 };
 
+typedef struct DASM_CtrlFlowSearchResult DASM_CtrlFlowSearchResult;
+struct DASM_CtrlFlowSearchResult
+{
+  Rng1U64 request_range;
+  DASM_CtrlFlowPoint v;
+  B32 finish;
+};
+
 ////////////////////////////////
 //~ rjf: Disassembly Text Decoration Types
 

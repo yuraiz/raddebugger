@@ -504,47 +504,38 @@ d_trap_net_from_thread__step_over_line(Arena *arena, D_Entity *thread)
           // br	x16 (flags=jump)
 
           //- yuraiz: check the first instructions of the code
-          Rng1U64 dest_vaddr_range = rng_1u64(point->jump_dest_vaddr, point->jump_dest_vaddr + sizeof(U64) * 16);
-          D_ProcessMemorySlice dest_machine_code_slice = d_process_memory_slice_from_vaddr_range(scratch.arena, process->handle, dest_vaddr_range, 0, os_now_microseconds()+50000);
-          String8 dest_machine_code = dest_machine_code_slice.data;
-          
-          B32 good_dest_machine_code = (dest_machine_code.size >= dim_1u64(dest_vaddr_range)
-           && !dest_machine_code_slice.any_byte_bad
-          );
-          
-          printf("analyzing the dest function: %p %p -> %d read %llu bytes\n", dest_vaddr_range.min, dest_vaddr_range.max, good_dest_machine_code, dest_machine_code.size);
-          
-          if(good_dest_machine_code)
-          {
-            printf("good machine code\n");
-            DASM_CtrlFlowInfo dest_ctrl_flow_info = dasm_ctrl_flow_info_from_arch_vaddr_code(scratch.arena,
-                                                                                             DASM_InstFlag_PushesArm64StackFrame|
-                                                                                             DASM_InstFlag_Return,
-                                                                                             arch,
-                                                                                             dest_vaddr_range.min,
-                                                                                             dest_machine_code);
 
-            for(DASM_CtrlFlowPointNode *n = dest_ctrl_flow_info.exit_points.first; n != 0; n = n->next)
+          
+
+
+          U64 dest_vaddr = 0;
+          String8 dest_machine_code = str8_zero();
+
+          while(1)
+          {
+            DASM_CtrlFlowSearchResult search_result = dasm_ctrl_flow_compute_function_body_vaddr_step(*point, arch, dest_vaddr, dest_machine_code);
+           
+            if(search_result.finish)
             {
-              DASM_CtrlFlowPoint *dest_point = &n->v;
-              if(dest_point->inst_flags & DASM_InstFlag_Return)
-              {
-                // the leaf function ended
-                break;
-              }
-              if(dest_point->inst_flags & DASM_InstFlag_PushesArm64StackFrame)
-              {
-                // replace the trap point to the stp instruction instead of bl
-                point = dest_point;
-                trap_addr = point->vaddr + sizeof(U32);
-                flags |= D_TrapFlag_SaveStackPointer;
-                printf("trap instruction %p\n", trap_addr);
-                break;
-              }
-              printf("analyzed\n");
+              point = &search_result.v;
+              break;
+            }
+            else
+            {
+              dest_vaddr = search_result.request_range.min;
+              Rng1U64 dest_vaddr_range = search_result.request_range;
+              D_ProcessMemorySlice dest_machine_code_slice = d_process_memory_slice_from_vaddr_range(scratch.arena, process->handle, dest_vaddr_range, 0, os_now_microseconds()+50000);
+              dest_machine_code = dest_machine_code_slice.data;
             }
           }
 
+          if(point->inst_flags & DASM_InstFlag_PushesArm64StackFrame)
+          {
+            // replace the trap point to the stp instruction instead of bl
+            trap_addr = point->vaddr + sizeof(U32);
+            flags |= D_TrapFlag_SaveStackPointer;
+          }
+      
           // TODO(yuraiz): ensure we actually search deep enough
 
           flags |= (D_TrapFlag_BeginSpoofMode|D_TrapFlag_SingleStepAfterHit);
