@@ -50,31 +50,30 @@ dmn_mac_write_to_protected(
   // NOTE(yuraiz): on macOS memory writable XOR executable.
   // so we need to change the protection before writing to it and revert back after.
 
-  mach_port_t object_name = MACH_PORT_NULL;
-  mach_msg_type_number_t region_info_size = VM_REGION_BASIC_INFO_COUNT_64;
-
-  vm_region_basic_info_64_t region_info = alloca(sizeof(*region_info));
+  mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
+  vm_region_submap_short_info_data_64_t region_info = {0};
 
   mach_vm_address_t region_address = address;
   mach_vm_size_t region_size = (mach_vm_size_t)size;
+  U32 nesting_depth = 999999;
 
   kern_return_t kr = 0;
 
-  kr = mach_vm_region(
+	kr = mach_vm_region_recurse(
     task,
     &region_address,
     &region_size,
-    VM_REGION_BASIC_INFO_64,
-    (vm_region_info_t)region_info,
-    &region_info_size,
-    &object_name
+    &nesting_depth,
+    (vm_region_recurse_info_t)&region_info,
+    &count
   );
+
   if(kr != 0)
   {
     printf("failed to query memory region %p..%p: %s\n", address, address + size, mach_error_string(kr));
   }
 
-  const vm_prot_t old_protection = region_info->protection;
+  vm_prot_t old_protection = region_info.protection;
 
   bool needs_to_change_protection =
       ((old_protection & VM_PROT_WRITE) == 0 ||
@@ -94,29 +93,52 @@ dmn_mac_write_to_protected(
       new_protection = (old_protection | VM_PROT_WRITE);
     }
 
-    kr = mach_vm_protect(
+    if(region_info.max_protection & VM_PROT_WRITE)
+    {
+      // the memory can be made writeable
+      kr = mach_vm_protect(
         task,
         region_address,
         region_size,
-        false,
-        new_protection | VM_PROT_COPY
-    );
+        0,
+        new_protection
+      );
+    }
+    else
+    {
+      // use copy-on-write to elevate the max protection and make the region writeable
+      kr = mach_vm_protect(
+        task,
+        region_address,
+        region_size,
+        0,
+        VM_PROT_COPY | VM_PROT_READ | VM_PROT_WRITE
+      );
+    }
+
     if(kr != 0)
     {
-      printf("%x -> %x (max: %x)\n", old_protection, new_protection, region_info->max_protection);
+      printf("%x -> %x (max: %x)\n", old_protection, new_protection, region_info.max_protection);
       printf("failed change protection %p..%p: %s\n", region_address, region_address + region_size, mach_error_string(kr));
     }
   }
 
-  kern_return_t status_code = mach_vm_write(
-    task, address, (vm_offset_t)data, (mach_msg_type_number_t)size
+  kr = mach_vm_write(
+    task,
+    address,
+    (vm_offset_t)data,
+    (mach_msg_type_number_t)size
   );
 
-  // Re-protect the region back to the way it was
+  // re-protect the region back to the way it was
   if ((revert_back || executable_protection_modified) &&
       needs_to_change_protection) {
     mach_vm_protect(
-        task, region_address, region_size, false, old_protection
+      task,
+      region_address,
+      region_size,
+      0,
+      old_protection
     );
 
     if (executable_protection_modified) {
@@ -124,7 +146,7 @@ dmn_mac_write_to_protected(
     }
   }
 
-  return status_code == 0;
+  return kr == 0;
 }
 
 internal kern_return_t
@@ -160,7 +182,7 @@ dmn_mac_compute_stack_range(
   mach_vm_address_t* address,
   mach_vm_size_t* size)
 { 
-  natural_t depth;
+  natural_t depth = 9999999;
   vm_prot_t protection;
   unsigned int user_tag;
   
