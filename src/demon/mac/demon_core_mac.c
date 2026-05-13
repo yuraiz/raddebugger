@@ -878,7 +878,7 @@ dmn_mac_push_event_create_process(Arena *arena, DMN_EventList *events, DMN_MAC_P
   e->process   = dmn_mac_handle_from_process(process);
   e->arch      = process->ctx->arch;
   e->code      = process->pid;
-  e->tls_model = DMN_TlsModel_Gnu; // TODO: use dynamic linker path to figure out correct enum here
+  e->tls_model = DMN_TlsModel_MacOS;
 
   scratch_end(scratch);
 }
@@ -1438,23 +1438,6 @@ dmn_init(void)
 
     dmn_mac_state->exc_port = dmn_mac_make_exception_port();
     
-    // find offsets of TLS index and TLS offset in the link_map struct
-    // 
-    // TODO: assuming that target is using same libc version as debugger
-    {
-      DMN_MAC_DbDesc *tls_modid_desc  = dlsym(RTLD_DEFAULT, "_thread_db_link_map_l_tls_modid");
-      DMN_MAC_DbDesc *tls_offset_desc = dlsym(RTLD_DEFAULT, "_thread_db_link_map_l_tls_offset");
-      if(tls_modid_desc && tls_offset_desc)
-      {
-        if(tls_modid_desc->bit_size <= 64 && tls_offset_desc->bit_size <= 64)
-        {
-          dmn_mac_state->tls_modid_desc  = *tls_modid_desc;
-          dmn_mac_state->tls_offset_desc = *tls_offset_desc;
-          dmn_mac_state->is_tls_detected = 1;
-        }
-        else { Assert(0 && "invalid TLS desc"); }
-      }
-    }
   }
   if(dmn_mac_exception_state == 0)
   {
@@ -2173,11 +2156,21 @@ internal U64
 dmn_tls_root_vaddr_from_thread(DMN_Handle thread_handle)
 {
   // TODO(yuraiz)
-  B32 result = 0;
+  U64 result = 0;
   DMN_MAC_Thread *thread = dmn_mac_thread_from_handle(thread_handle);
   if(thread)
   {
-    // TODO(yuraiz): understand the offset
+    // TODO(yuraiz): I guess the thread handle changes until the modules are finally loaded.
+
+    struct thread_identifier_info identifier_info;
+    mach_msg_type_number_t count = THREAD_IDENTIFIER_INFO_COUNT;
+    kern_return_t kr = thread_info(thread->tid,
+                                  THREAD_IDENTIFIER_INFO,
+                                  (thread_info_t)&identifier_info,
+                                  &count);
+  
+    thread->thread_local_base = identifier_info.thread_handle;
+    
     result = thread->thread_local_base;
   }
   return result;

@@ -102,7 +102,8 @@ enum
 {
   D_TlsModel_Null,
   D_TlsModel_WinodwsNt,
-  D_TlsModel_Gnu
+  D_TlsModel_Gnu,
+  D_TlsModel_MacOS,
 };
 
 ////////////////////////////////

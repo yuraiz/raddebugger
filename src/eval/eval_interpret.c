@@ -337,14 +337,92 @@ e_interpret(String8 bytecode)
       
       case RDI_EvalOp_TLSOff:
       {
-        if(e_interpret_ctx->tls_base != 0)
+        switch(e_interpret_ctx->tls_kind)
         {
-          nval.u64 = *e_interpret_ctx->tls_base + imm.u64;
-        }
-        else
-        {
-          result.code = E_InterpretationCode_BadTLSBase;
-          goto done;
+          default:{}break;
+          case E_TlsKind_Offset:
+          {
+            if(e_interpret_ctx->tls_base != 0)
+            {
+              nval.u64 = *e_interpret_ctx->tls_base + imm.u64;
+            }
+            else
+            {
+              result.code = E_InterpretationCode_BadTLSBase;
+              goto done;
+            }
+          }break;
+          case E_TlsKind_MacOS:
+          {
+            // NOTE(yuraiz): DW_OP_FormTlsAddress on macOS doesn't mean "compute the offset from the base"
+            // The address is formed by calling the function located by the operand value (imm.u64).
+            // (And the thread local is first initialized by calling that function too)
+            //
+            // But since function calling isn't yet implemented that code executes the first part of the computation:
+            //
+            // call site:
+            // adrp x0, 0x102128000                 // vaddr of TLV_Thunkv2
+            // add  x0, x0, #0
+            // ldr  x8, [x0]
+            // blr  x8                              // call tlv_get_addr
+            // 
+            // from libdyld/threadLocalHelpers.s, comments left unchanged
+            // __tlv_get_addr:
+            // 	ldr		w16, [x0, #8]			            // get key from descriptor (TLV_Thunkv2.key)
+            // 	mrs		x17, TPIDRRO_EL0
+            // 	and		x17, x17, #-8			            // clear low 3 bits???
+            // 	ldr		x17, [x17, x16, lsl #3]	      // get thread allocation address for this key
+            // 	cbz		x17, LlazyAllocate		        // if NULL, lazily allocate
+            // 	ldr		w16, [x0, #12]			          // get offset from descriptor (TLV_Thunkv2.offset)
+            // 	add		x0, x17, x16			            // return allocation+offset
+            // 	ret		lr
+
+            U64 thunk_off =  *e_interpret_ctx->module_base + imm.u64;
+
+            // matches layout of TLV_Thunkv2 in libdyld/ThreadLocalVariables.h
+            typedef struct 
+            {
+                U64 func;
+                U32 key;
+                U32 offset;
+                S32 init_delta;   // if zero, then content is all zeros
+                U32 init_size;
+            } TLV_Thunkv2;
+            
+            TLV_Thunkv2 tlv_thunk = {0};
+            
+            B32 good_read = e_space_read(e_interpret_ctx->primary_space, &tlv_thunk, r1u64(thunk_off, thunk_off+sizeof(tlv_thunk)));
+            
+            U64 base_vaddr = *e_interpret_ctx->tls_base & 0xfffffffffffffff8;
+
+            U64 allocation_vaddr = 0;
+            U64 alloc_off  = base_vaddr + (tlv_thunk.key << 3);
+            good_read &= e_space_read(e_interpret_ctx->primary_space, &allocation_vaddr, r1u64(alloc_off, alloc_off+sizeof(U64)));
+
+            //- yuraiz: found the allocation address
+            if(allocation_vaddr != 0)
+            {
+              nval.u64 = allocation_vaddr + tlv_thunk.offset;
+            }
+            
+            //- yuraiz: not allocated yet, use the initial value
+            else if(tlv_thunk.init_delta != 0)
+            {
+              nval.u64 = thunk_off + OffsetOf(TLV_Thunkv2, init_delta) + tlv_thunk.init_delta + tlv_thunk.offset;
+            }
+
+            //- yuraiz: not allocated yet, the initial value is 0
+            else
+            {
+              nval.u64 = 0;
+            }
+
+            if(!good_read)
+            {
+              result.code = E_InterpretationCode_BadTLSBase;
+              goto done;
+            }
+          }break;
         }
       }break;
       

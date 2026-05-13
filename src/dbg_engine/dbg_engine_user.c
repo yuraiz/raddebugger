@@ -1170,6 +1170,11 @@ d_tls_base_vaddr_from_process_root_rip(D_Entity *process, U64 root_vaddr, U64 ri
           }
         }
       }break;
+      case D_TlsModel_MacOS:
+      {
+        // NOTE(yuraiz): the actual computation hapens during the evaluation, see eval_interpret.c.
+        base_vaddr = root_vaddr;
+      }break;
       default: {InvalidPath;}break;
     }
     

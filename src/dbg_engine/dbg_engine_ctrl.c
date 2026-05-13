@@ -52,6 +52,7 @@ d_dynamic_linker_type_from_dmn(DMN_TlsModel type)
     case DMN_TlsModel_Null:      {result = D_TlsModel_Null;}break;
     case DMN_TlsModel_WinodwsNt: {result = D_TlsModel_WinodwsNt;}break;
     case DMN_TlsModel_Gnu:       {result = D_TlsModel_Gnu;}break;
+    case DMN_TlsModel_MacOS:     {result = D_TlsModel_MacOS;}break;
   }
   return result;
 }

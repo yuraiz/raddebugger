@@ -26,7 +26,8 @@ enum
 {
   DMN_TlsModel_Null,
   DMN_TlsModel_WinodwsNt,
-  DMN_TlsModel_Gnu
+  DMN_TlsModel_Gnu,
+  DMN_TlsModel_MacOS,
 };
 
 ////////////////////////////////
