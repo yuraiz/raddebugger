@@ -507,6 +507,8 @@ dmn_mac_entity_alloc(DMN_MAC_EntityKind kind)
   }
   U32 gen = entity->gen;
   entity->gen += 1;
+  U64 gen_mask = AlignOf(DMN_MAC_Entity) - 1;
+  entity->gen &= gen_mask;
   entity->kind = kind;
   return entity;
 }
@@ -793,8 +795,13 @@ dmn_mac_handle_from_entity(DMN_MAC_Entity *entity)
   DMN_Handle handle = {0};
   U64 index = IntFromPtr(entity);
   handle.u64[0] = index;
-  // handle.u32[0] = index;
-  // handle.u32[1] = entity->gen;
+
+  U64 gen_mask = AlignOf(DMN_MAC_Entity) - 1;
+  
+  //-yuraiz assert that no meaningful bits are cleared
+  Assert(((handle.u64[0] & gen_mask) == 0) && "Invalid gen mask");
+  handle.u64[0] |= entity->gen & gen_mask;
+
   return handle;
 }
 
@@ -825,8 +832,24 @@ dmn_mac_handle_from_module(DMN_MAC_Module *module)
 internal DMN_MAC_Entity *
 dmn_mac_entity_from_handle(DMN_Handle handle, DMN_MAC_EntityKind expected_kind)
 {
-  // TODO(yuraiz): Figure out what "gen" was for
-  DMN_MAC_Entity *result = (DMN_MAC_Entity *)handle.u64[0];
+  // NOTE(yuraiz): I had crashes with the implementation using offset from the
+  // base so I decided to use the lowest bits to store the generation.
+  U64 gen_mask = AlignOf(DMN_MAC_Entity) - 1;
+  U64 pointer_value = handle.u64[0] & ~(gen_mask);
+  U64 gen_value = handle.u64[0] & gen_mask;
+  DMN_MAC_Entity *result = PtrFromInt(pointer_value);
+
+  if(result != 0)
+  {
+    if((result->gen & gen_mask) != gen_value)
+    {
+      result = 0;
+    }
+    else if(result->kind != expected_kind)
+    {
+      result = 0;
+    }
+  }
   return result;
 }
 
@@ -1224,7 +1247,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
         mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
 
         // generate unload module events
-        for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+        for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
         {
           for EachIndex(i, info_count)
           {
@@ -1244,7 +1267,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
         mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
 
         // generate unload module events
-        for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+        for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
         {
           B32 exists = 0;
           for EachIndex(i, info_count)
@@ -1295,7 +1318,7 @@ dmn_mac_event_probe_breakpoint(Arena* arena, DMN_EventList *events, DMN_MAC_Thre
 
         process->ctx->dyld_notifier_address = (U64)all_image_infos.notification;
 
-        for EachNode(module, DMN_MAC_Module, process->ctx != 0 ? process->ctx->first_module : 0)
+        for EachNode(module, DMN_MAC_Module, process->ctx->first_module)
         {
           dmn_mac_event_unload_module(arena, events, process, module);
         }
@@ -2181,8 +2204,7 @@ dmn_thread_read_reg_block(DMN_Handle thread_handle, void *reg_block)
 {
   B32 result = 0;
   DMN_MAC_Thread *thread = dmn_mac_thread_from_handle(thread_handle);
-  // TODO(yuraiz): fix the bug with a nil reg block
-  if(thread && thread->reg_block)
+  if(thread)
   {
     U64 reg_block_size = regs_block_size_from_arch(Arch_arm64);
     MemoryCopy(reg_block, thread->reg_block, reg_block_size);
