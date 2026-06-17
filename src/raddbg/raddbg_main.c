@@ -367,7 +367,11 @@
 
 //- rjf: [h]
 #include "base/base_inc.h"
-#include "x64/x64.h"
+#if ARCH_X64
+# include "x64/x64.h"
+#elif ARCH_ARM64
+# include "arm64/arm64.h"
+#endif
 #include "win32/win32_inc.h"
 #include "linker/hash_table.h"
 #include "linker/base_ext/base_bit_array.h"
@@ -427,7 +431,11 @@
 
 //- rjf: [c]
 #include "base/base_inc.c"
-#include "x64/x64.c"
+#if ARCH_X64
+# include "x64/x64.c"
+#elif ARCH_ARM64
+# include "arm64/arm64.c"
+#endif
 #include "win32/win32_inc.c"
 #include "linker/hash_table.c"
 #include "linker/base_ext/base_bit_array.c"
