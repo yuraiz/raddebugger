@@ -810,6 +810,23 @@ wm_dpi_from_window(WM_Window handle)
 }
 
 ////////////////////////////////
+//~ rjf: @per_os_impl External Windows (Implemented Per-OS)
+
+internal WM_ExtWindow
+wm_focused_external_window(void)
+{
+  WM_ExtWindow result = {0};
+  // TODO(rjf)
+  return result;
+}
+
+internal void
+wm_focus_external_window(WM_ExtWindow handle)
+{
+  // TODO(rjf)
+}
+
+////////////////////////////////
 //~ rjf: @wm_hooks Monitors (Implemented Per-OS)
 
 internal WM_MonitorArray
@@ -919,7 +936,7 @@ mac_wm_push_event( WM_EventKind kind, MAC_WM_Window *window )
 }
 
 internal void
-mac_wm_send_dummy_event( void )
+mac_wm_send_dummy_event(void)
 {
   NSPoint location = {0, 0};
   NSEvent *dummy = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
@@ -933,7 +950,7 @@ mac_wm_send_dummy_event( void )
                                          data2:0];
   dispatch_async(dispatch_get_main_queue(),
   ^{
-    [NSApp postEvent:event atStart:NO];
+    [NSApp postEvent:dummy atStart:NO];
   });
 }
 

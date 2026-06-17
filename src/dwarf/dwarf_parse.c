@@ -67,6 +67,18 @@ dw_section_kind_from_string(String8 string)
   return s;
 }
 
+internal DW_SectionKind
+dw_section_kind_from_string_apple(String8 string)
+{
+  DW_SectionKind s = DW_SectionKind_Null;
+#define X(_K,_L,_M,_W)                                      \
+if (str8_match(str8_prefix(str8_lit(_L), 16), string, 0)) { s = DW_SectionKind_##_K; } \
+if (str8_match(str8_prefix(str8_lit(_M), 16), string, 0)) { s = DW_SectionKind_##_K; }
+  DW_SectionKind_XList
+#undef X
+  return s;
+}
+
 ////////////////////////////////
 //~ rjf: Unit Range Set Parsing (Top-Level .debug_info, .debug_aranges)
 

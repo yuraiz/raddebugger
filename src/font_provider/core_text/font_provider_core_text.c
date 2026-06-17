@@ -117,7 +117,7 @@ fp_font_open(String8 path)
     String8 path = str8_copy(scratch.arena, t->path);
     if (file_exists)
     {
-      CFStringRef path_cf = CFStringCreateWithCString(kCFAllocatorDefault, path.str, kCFStringEncodingUTF8);
+      CFStringRef path_cf = CFStringCreateWithCString(kCFAllocatorDefault, (const char *)path.str, kCFStringEncodingUTF8);
       CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault, path_cf, kCFURLPOSIXPathStyle, false);
       CGDataProviderRef provider = CGDataProviderCreateWithURL(url);
       if (provider != 0)

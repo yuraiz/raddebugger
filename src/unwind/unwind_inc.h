@@ -5,11 +5,11 @@
 #define UNWIND_INC_H
 
 #include "unwind.h"
-#if defined(PE_H) && defined(X64_H)
+// #if defined(PE_H) && defined(X64_H)
 # include "pe/x64/unwind/pe_x64_unwind.h"
-#endif
-#if defined(EH_FRAME_H)
+// #endif
+// #if defined(EH_FRAME_H)
 # include "eh_frame/unwind/eh_frame_unwind.h"
-#endif
+// #endif
 
 #endif // UNWIND_INC_H

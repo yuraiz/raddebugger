@@ -1159,7 +1159,7 @@ semaphore_alloc(U32 initial_count, U32 max_count, String8 name)
   if (name.size > 0)
   {
     // TODO: we need to allocate shared memory to store sem_t
-    NotImplemented;
+    // NotImplemented;
   }
   else
   {
@@ -1210,9 +1210,13 @@ semaphore_take(Semaphore semaphore, U64 endt_us)
     deadline = dispatch_walltime(&endt_timespec, 0);
   }
 
-  if (dispatch_semaphore_wait((dispatch_semaphore_t)semaphore.u64[0], deadline) == 0)
+  // TODO(yuraiz): Remove that check when isn't needed
+  if (semaphore.u64[0] != 0)
   {
-    result = 1;
+    if (dispatch_semaphore_wait((dispatch_semaphore_t)semaphore.u64[0], deadline) == 0)
+    {
+      result = 1;
+    }
   }
 
   return result;
@@ -1265,6 +1269,9 @@ barrier_release(Barrier barrier)
 internal void
 barrier_wait(Barrier barrier)
 {
+  // TODO(yuraiz): Why can it be zero?
+  if (barrier.u64[0] == 0) return;
+
   MAC_Entity *entity = (MAC_Entity*)PtrFromInt(barrier.u64[0]);
   pthread_mutex_lock(&entity->barrier.mutex_handle);
   //- brt: check in
@@ -1453,18 +1460,18 @@ mac_signal_handler(int sig, siginfo_t *info, void *arg)
 int
 main(int argc, char **argv)
 {
-  //- brt: install signal handler for the crash call stacks
-  {
-    struct sigaction handler = { .sa_sigaction = mac_signal_handler, .sa_flags = SA_SIGINFO, };
-    sigfillset(&handler.sa_mask);
-    sigaction(SIGILL, &handler, 0);
-    sigaction(SIGTRAP, &handler, 0);
-    sigaction(SIGABRT, &handler, 0);
-    sigaction(SIGFPE, &handler, 0);
-    sigaction(SIGBUS, &handler, 0);
-    sigaction(SIGSEGV, &handler, 0);
-    sigaction(SIGQUIT, &handler, 0);
-  }
+  // //- brt: install signal handler for the crash call stacks
+  // {
+  //   struct sigaction handler = { .sa_sigaction = mac_signal_handler, .sa_flags = SA_SIGINFO, };
+  //   sigfillset(&handler.sa_mask);
+  //   sigaction(SIGILL, &handler, 0);
+  //   sigaction(SIGTRAP, &handler, 0);
+  //   sigaction(SIGABRT, &handler, 0);
+  //   sigaction(SIGFPE, &handler, 0);
+  //   sigaction(SIGBUS, &handler, 0);
+  //   sigaction(SIGSEGV, &handler, 0);
+  //   sigaction(SIGQUIT, &handler, 0);
+  // }
 
   //- rjf: set up OS layer
   {

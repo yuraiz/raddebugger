@@ -24,7 +24,9 @@ x64_cpuid(U32 leaf, U32 *eax, U32 *ebx, U32 *ecx, U32 *edx)
   if (!ebx) { ebx = &info[1]; }
   if (!ecx) { ecx = &info[2]; }
   if (!edx) { edx = &info[3]; }
+# if ARCH_X64
   __get_cpuid(leaf, eax, ebx, ecx, edx);
+# endif
 #else
 # error "cpuid is not defined for this compiler"
 #endif
@@ -45,9 +47,11 @@ x64_cpuid_ex(U32 leaf, U32 sub_leaf, U32 *eax, U32 *ebx, U32 *ecx, U32 *edx)
   if (!ebx) { ebx = &info[1]; }
   if (!ecx) { ecx = &info[2]; }
   if (!edx) { edx = &info[3]; }
+# if ARCH_X64
   __get_cpuid_count(leaf, sub_leaf, eax, ebx, ecx, edx);
+# endif
 #else
-# error "cpuid_count is not defined for this compiler"
+#  error "cpuid_count is not defined for this compiler"
 #endif
 }
 

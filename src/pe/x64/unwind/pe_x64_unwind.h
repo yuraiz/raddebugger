@@ -20,6 +20,10 @@ struct PE_X64_UWND_ModuleUnwindInfo
 internal PE_IntelPdata *pe_x64_uwnd_intel_pdata_from_voff(PE_X64_UWND_ModuleUnwindInfo *unwind_info, U64 voff);
 internal X64_RegCode pe_x64_uwnd_reg_code_from_pe_gpr_reg(PE_UnwindGprRegX64 gpr_reg);
 
+#ifndef X64_H
+# error "Hello"
+#endif
+
 ////////////////////////////////
 //~ rjf: Unwinding Abstraction Implementation
 

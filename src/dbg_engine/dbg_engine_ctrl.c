@@ -2439,7 +2439,7 @@ d_ctrl_thread__entry_point(void *p)
     ProfScope("update thread register cache")
     {
       D_EntityArray threads = d_entity_array_from_kind(D_EntityKind_Thread);
-      X64_RegBlock *blocks = push_array(scratch.arena, X64_RegBlock, threads.count);
+      // X64_RegBlock *blocks = push_array(scratch.arena, X64_RegBlock, threads.count);
       {
         for EachIndex(idx, threads.count)
         {
@@ -2612,6 +2612,7 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, U64 base_vaddr, DM
     //- rjf: PE/x64 unwinder
     if(dim_1u64(module_info->pe_intel_pdatas_vaddr_range) != 0)
     {
+#if defined(PE_H) && defined(X64_H)
       unwinder = UWND_Unwinder_PEx64;
       PE_X64_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, PE_X64_UWND_ModuleUnwindInfo, 1);
       {
@@ -2622,21 +2623,24 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, U64 base_vaddr, DM
         unwind_info->pdatas = pdatas;
         unwind_info->pdatas_count = pdatas_count;
       }
-      unwind_info_opaque = unwind_info;
+      unwind_info_opaque = unwind_info;      
+#endif // defined(PE_H) && defined(X64_H)
     }
     
     //- rjf: .eh_frame unwinder
     else if(dim_1u64(module_info->eh_frame_header_vaddr_range) != 0)
     {
-      unwinder = UWND_Unwinder_EHFrame;
-      EH_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, EH_UWND_ModuleUnwindInfo, 1);
-      {
-        String8 eh_frame_hdr_data = d_data_from_process_vaddr_range(arena, process, module_info->eh_frame_header_vaddr_range, 0);
-        unwind_info->ptr_ctx.pc_vaddr   = module_info->eh_frame_header_vaddr_range.min;
-        unwind_info->ptr_ctx.data_vaddr = module_info->eh_frame_header_vaddr_range.min;
-        unwind_info->header = eh_parse_frame_hdr(eh_frame_hdr_data, byte_size_from_arch(module_info->arch), &unwind_info->ptr_ctx);
-      }
-      unwind_info_opaque = unwind_info;
+#if defined(EH_FRAME_H)
+    unwinder = UWND_Unwinder_EHFrame;
+    EH_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, EH_UWND_ModuleUnwindInfo, 1);
+    {
+      String8 eh_frame_hdr_data = d_data_from_process_vaddr_range(arena, process, module_info->eh_frame_header_vaddr_range, 0);
+      unwind_info->ptr_ctx.pc_vaddr   = module_info->eh_frame_header_vaddr_range.min;
+      unwind_info->ptr_ctx.data_vaddr = module_info->eh_frame_header_vaddr_range.min;
+      unwind_info->header = eh_parse_frame_hdr(eh_frame_hdr_data, byte_size_from_arch(module_info->arch), &unwind_info->ptr_ctx);
+    }
+    unwind_info_opaque = unwind_info;
+#endif
     }
   }
   
