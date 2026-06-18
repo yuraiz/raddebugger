@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <libproc.h>
 #include <spawn.h>
+#include <semaphore.h>
 #include <execinfo.h>
 #include <mach-o/dyld.h>
 #include <crt_externs.h>
@@ -93,6 +94,8 @@ typedef enum MAC_EntityKind
   MAC_EntityKind_Mutex,
   MAC_EntityKind_RWMutex,
   MAC_EntityKind_ConditionVariable,
+  MAC_EntityKind_Semaphore,
+  MAC_EntityKind_NamedSemaphore,
   MAC_EntityKind_Barrier,
 }
 MAC_EntityKind;
@@ -117,6 +120,8 @@ struct MAC_Entity
       pthread_cond_t cond_handle;
       pthread_mutex_t rwlock_mutex_handle;
     } cv;
+    dispatch_semaphore_t semaphore;
+    sem_t *named_semaphore;
     struct
     {
       U64 thread_count;

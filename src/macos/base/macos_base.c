@@ -1158,77 +1158,167 @@ cond_var_broadcast(CondVar cv)
 internal Semaphore
 semaphore_alloc(U32 initial_count, U32 max_count, String8 name)
 {
-  Semaphore result = {0};
+  Temp scratch = scratch_begin(0, 0);
+  MAC_Entity *entity = 0;
   if (name.size > 0)
   {
-    // TODO: we need to allocate shared memory to store sem_t
-    // NotImplemented;
+    if (name.size > 25)
+    {
+      U64 trim = name.size - 25;
+      name = str8_skip(name, trim);
+    }
+    for EachIndex(attempt_idx, 64)
+    {
+      String8 name_copy = str8_copy(scratch.arena, name);
+      sem_t *s = sem_open((char *)name_copy.str, O_CREAT | O_EXCL, 0666, initial_count);
+      if (s == SEM_FAILED)
+      {
+        s = sem_open((char *)name_copy.str, 0);
+      }
+      if (s != SEM_FAILED)
+      {
+        entity = mac_entity_alloc(MAC_EntityKind_NamedSemaphore);
+        entity->named_semaphore = s;
+        break;
+      }
+    }
   }
   else
   {
     dispatch_semaphore_t s = dispatch_semaphore_create(initial_count);
     if (s != 0)
     {
-      MemoryCopy(&result.u64[0], &s, sizeof(dispatch_semaphore_t));
+      entity = mac_entity_alloc(MAC_EntityKind_Semaphore);
+      entity->semaphore = s;
     }
   }
+  scratch_end(scratch);
+  Semaphore result = {IntFromPtr(entity)};
   return result;
 }
 
 internal void
 semaphore_release(Semaphore semaphore)
 {
-  dispatch_semaphore_t sem;
-  MemoryCopy(&sem, &semaphore.u64[0], sizeof(sem));
-  dispatch_release(sem);
+  MAC_Entity *entity = (MAC_Entity *)PtrFromInt(semaphore.u64[0]);
+  if (entity != 0 && entity->kind == MAC_EntityKind_NamedSemaphore)
+  {
+    sem_close(entity->named_semaphore);
+  }
+  if (entity != 0 && entity->kind == MAC_EntityKind_Semaphore)
+  {
+    dispatch_release(entity->semaphore);
+  }
 }
 
 internal Semaphore
 semaphore_open(String8 name)
 {
-  NotImplemented;
+  Temp scratch = scratch_begin(0, 0);
+  MAC_Entity *entity = 0;
+  if (name.size > 25)
+  {
+    U64 trim = name.size - 25;
+    name = str8_skip(name, trim);
+  }
+  String8 name_copy = str8_copy(scratch.arena, name);
+  sem_t *s = sem_open((char *)name_copy.str, 0);
+  if (s != SEM_FAILED)
+  {
+    entity = mac_entity_alloc(MAC_EntityKind_NamedSemaphore);
+    entity->named_semaphore = s;
+  }
+  scratch_end(scratch);
+  Semaphore result = {IntFromPtr(entity)};
+  return result;
 }
 
 internal void
 semaphore_close(Semaphore semaphore)
 {
-  NotImplemented;
+  MAC_Entity *entity = (MAC_Entity *)PtrFromInt(semaphore.u64[0]);
+  if (entity != 0 && entity->kind == MAC_EntityKind_NamedSemaphore)
+  {
+    sem_close(entity->named_semaphore);
+  }
 }
 
 internal B32
 semaphore_take(Semaphore semaphore, U64 endt_us)
 {
-  B32 result = 0;
-
-  dispatch_time_t deadline = DISPATCH_TIME_NOW;
-  if (endt_us == max_U64)
+  B32 result = 1;
+  MAC_Entity *entity = (MAC_Entity*)PtrFromInt(semaphore.u64[0]);
+  if(entity != 0 && entity->kind == MAC_EntityKind_NamedSemaphore)
   {
-    deadline = DISPATCH_TIME_FOREVER;
-  }
-  else
-  {
-    struct timespec endt_timespec;
-    endt_timespec.tv_sec = endt_us/Million(1);
-    endt_timespec.tv_nsec = Thousand(1) * (endt_us - (endt_us/Million(1))*Million(1));
-    deadline = dispatch_walltime(&endt_timespec, 0);
-  }
-
-  // TODO(yuraiz): Remove that check when isn't needed
-  if (semaphore.u64[0] != 0)
-  {
-    if (dispatch_semaphore_wait((dispatch_semaphore_t)semaphore.u64[0], deadline) == 0)
+    // TODO(rjf): we need to use `sem_timedwait` here.
+    // called with different endt_us at raddbg_main.c:631:16
+    // AssertAlways(endt_us == max_U64);
+    for(;;)
     {
-      result = 1;
+      int err = sem_wait(entity->named_semaphore);
+      if(err == 0)
+      {
+        break;
+      }
+      else if(errno == EAGAIN)
+      {
+        continue;
+      }
+      break;
     }
   }
 
+  else if(entity != 0 && entity->kind == MAC_EntityKind_Semaphore)
+  {
+    dispatch_time_t deadline = DISPATCH_TIME_NOW;
+    if (endt_us == max_U64)
+    {
+      deadline = DISPATCH_TIME_FOREVER;
+    }
+    else
+    {
+      struct timespec endt_timespec;
+      endt_timespec.tv_sec = endt_us/Million(1);
+      endt_timespec.tv_nsec = Thousand(1) * (endt_us - (endt_us/Million(1))*Million(1));
+      deadline = dispatch_walltime(&endt_timespec, 0);
+    }
+
+    if (dispatch_semaphore_wait(entity->semaphore, deadline) != 0)
+    {
+      result = 0;
+    }
+  }
   return result;
 }
 
 internal void
 semaphore_drop(Semaphore semaphore)
 {
-  dispatch_semaphore_signal((dispatch_semaphore_t)semaphore.u64[0]);
+  MAC_Entity *entity = (MAC_Entity*)PtrFromInt(semaphore.u64[0]);
+  if(entity != 0 && entity->kind == MAC_EntityKind_NamedSemaphore)
+  {
+    for(;;)
+    {
+      int err = sem_post(entity->named_semaphore);
+      if(err == 0)
+      {
+        break;
+      }
+      else
+      {
+        if(errno == EAGAIN)
+        {
+          continue;
+        }
+      }
+      break;
+    }
+  }
+
+  else if(entity != 0 && entity->kind == MAC_EntityKind_Semaphore)
+  {
+    dispatch_semaphore_signal(entity->semaphore);
+  }
 }
 
 //- brt: barriers
@@ -1273,6 +1363,7 @@ internal void
 barrier_wait(Barrier barrier)
 {
   // TODO(yuraiz): Why can it be zero?
+  // NOTE(brt): It's because async_tick splits the lane context when doing thin tasks and doesn't create a barrier
   if (barrier.u64[0] == 0) return;
 
   MAC_Entity *entity = (MAC_Entity*)PtrFromInt(barrier.u64[0]);

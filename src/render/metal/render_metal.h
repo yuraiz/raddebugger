@@ -6,6 +6,7 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 //~ brt: Generated Code
@@ -104,6 +105,7 @@ struct R_METAL_Window
   //- brt: metal layer
   CAMetalLayer *layer;
   id<MTLTexture> stage_color;
+  id<MTLTexture> stage_blur;
   id<MTLTexture> stage_depth;
   id<MTLCommandBuffer> command_buffer;
 

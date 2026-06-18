@@ -741,10 +741,13 @@ r_window_begin_frame(WM_Window window, R_Handle window_equip)
                                                                                              height:(NSUInteger)height
                                                                                           mipmapped:NO];
         color_desc.textureType = MTLTextureType2D;
-        color_desc.usage |= MTLTextureUsageRenderTarget;
+        color_desc.usage |= MTLTextureUsageRenderTarget | MTLTextureUsageShaderWrite;
         color_desc.storageMode = MTLStorageModePrivate;
         wnd->stage_color = [r_metal_state->device newTextureWithDescriptor:color_desc];
         wnd->stage_color.label = @"Staging Render Target";
+
+        wnd->stage_blur = [r_metal_state->device newTextureWithDescriptor:color_desc];
+        wnd->stage_blur.label = @"Staging Blur Render Target";
 
         MTLTextureDescriptor *depth_desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
                                                                                               width:(NSUInteger)width
@@ -1098,224 +1101,25 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         //- brt: blur rendering pass
         case R_PassKind_Blur:
         {
-#if 0
-          // brt: unpack params
           R_PassParams_Blur *params = pass->params_blur;
+          F32 sigma = params->blur_size;
+          MPSImageGaussianBlur *blur = [[MPSImageGaussianBlur alloc] initWithDevice:mtl_device
+                                                                              sigma:sigma];
+          Rng2F32 clip = params->clip;
 
-
-          // brt: set up viewport
-          Vec2S32 resolution = wnd->last_resolution;
-          MTLViewport viewport = { 0.0, 0.0, resolution.x, resolution.y, 0.0, 1.0 };
-          MTLViewport half_viewport = { 0.0, 0.0, resolution.x/2.0, resolution.y/2.0, 0.0, 1.0 };
-          F32 vibrance = params->vibrance;
-
-          // brt: upload uniforms
-          R_METAL_Uniforms_Blur uniforms = {0};
-          {
-            F32 weights[ArrayCount(uniforms.kernel)*2] = {0};
-
-            F32 blur_size = Min(params->blur_size, ArrayCount(weights));
-            U64 blur_count = (U64)round_f32(blur_size);
-
-            F32 stdev = (blur_size-1.f)/2.f;
-            F32 one_over_root_2pi_stdev2 = 1.f/sqrt_f32(2*pi32*stdev*stdev);
-            F32 euler32 = 2.718281828459045f;
-
-            weights[0] = 1.f;
-            if (stdev > 0.f)
-            {
-              for (U64 idx = 0; idx < blur_count; idx += 1)
-              {
-                F32 kernel_x = (F32)idx;
-                weights[idx] = one_over_root_2pi_stdev2*pow_f32(euler32, -kernel_x*kernel_x/(2.f*stdev*stdev));
-              }
-            }
-            if (weights[0] > 1.f)
-            {
-              MemoryZeroArray(weights);
-              weights[0] = 1.f;
-            }
-            else
-            {
-              // prepare weights & offsets for bilinear lookup
-              // blur filter wants to calculate w0*pixel[pos] + w1*pixel[pos+1] + ...
-              // with bilinear filter we can do this calulation by doing only w*sample(pos+t) = w*((1-t)*pixel[pos] + t*pixel[pos+1])
-              // we can see w0=w*(1-t) and w1=w*t
-              // thus w=w0+w1 and t=w1/w
-              for (U64 idx = 1; idx < blur_count; idx += 2)
-              {
-                F32 w0 = weights[idx + 0];
-                F32 w1 = weights[idx + 1];
-                F32 w = w0 + w1;
-                F32 t = w1 / w;
-
-                // each kernel element is float2(weight, offset)
-                // weights & offsets are adjusted for bilinear sampling
-                // zw elements are not used, a bit of waste but it allows for simpler shader code
-                uniforms.kernel[(idx+1)/2] = v4f32(w, (F32)idx+t, 0, 0);
-              }
-            }
-            uniforms.kernel[0].x = weights[0];
-
-            // technically we need just direction be different
-            // but there are 256 bytes of usable space anyway for each constant buffer chunk
-            Rng2F32 rect = pad_2f32(params->rect, 8.f);
-
-            uniforms.passes[Axis2_X].viewport_size = v2f32(resolution.x, resolution.y);
-            uniforms.passes[Axis2_X].rect          = rect;
-            uniforms.passes[Axis2_X].direction     = v2f32(1.f / (resolution.x), 0);
-            uniforms.passes[Axis2_X].blur_count    = 1 + blur_count / 2; // 2x smaller because of bilinear sampling
-            uniforms.passes[Axis2_X].tint_t        = params->tint_t;
-            uniforms.passes[Axis2_X].vibrance      = vibrance;
-            MemoryCopyArray(uniforms.passes[Axis2_X].corner_radii.v, params->corner_radii);
-            
-            uniforms.passes[Axis2_Y].viewport_size = v2f32(resolution.x, resolution.y);
-            uniforms.passes[Axis2_Y].rect          = rect;
-            uniforms.passes[Axis2_Y].direction     = v2f32(0, 1.f / (resolution.y));
-            uniforms.passes[Axis2_Y].blur_count    = 1 + blur_count / 2; // 2x smaller because of bilinear sampling
-            uniforms.passes[Axis2_Y].tint_t        = params->tint_t;
-            uniforms.passes[Axis2_Y].vibrance      = vibrance;
-            MemoryCopyArray(uniforms.passes[Axis2_Y].corner_radii.v, params->corner_radii);
-
-          }
-
-          // brt: setup scissor rect
-          MTLScissorRect rect = {0};
-          MTLScissorRect half_rect = {0};
-          {
-            Rng2F32 clip = params->clip;
-            if (clip.x0 == 0 && clip.y0 == 0 && clip.x1 == 0 && clip.y1 == 0)
-            {
-              rect.x = 0;
-              rect.y = 0;
-              rect.width = (NSUInteger)(wnd->last_resolution.x);
-              rect.height = (NSUInteger)(wnd->last_resolution.y);
-            }
-            else if (clip.x0 > clip.x1 || clip.y0 > clip.y1)
-            {
-              rect.x = 0;
-              rect.y = 0;
-              rect.width = 0;
-              rect.height = 0;
-            }
-            else
-            {
-              rect.x = (NSUInteger)(clip.x0);
-              rect.y = (NSUInteger)(clip.y0);
-              rect.width = (NSUInteger)((clip.x1 - clip.x0));
-              rect.height = (NSUInteger)((clip.y1 - clip.y0));
-            }
-          }
-          //- brt: setup scissor half-rect
-          {
-            half_rect.x = rect.x / 2.0;
-            half_rect.y = rect.y / 2.0;
-            half_rect.width = rect.width / 2.0;
-            half_rect.height = rect.height / 2.0;
-          }
-
-          // brt: downsample pass
-          mtl_pass_desc.colorAttachments[0].texture = wnd->scratch_color_2x_downsample_1;
-          mtl_pass_desc.colorAttachments[0].loadAction = MTLLoadActionClear;
-          mtl_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-          id<MTLRenderCommandEncoder> mtl_encoder_downsample = [mtl_command_buffer renderCommandEncoderWithDescriptor:mtl_pass_desc];
-          [mtl_encoder_downsample setViewport:half_viewport];
-          [mtl_encoder_downsample setRenderPipelineState:r_metal_state->downsample_render_pipeline_state];
-          [mtl_encoder_downsample setScissorRect:half_rect];
-          [mtl_encoder_downsample setFragmentTexture:wnd->stage_color atIndex:0];
-          [mtl_encoder_downsample setVertexBytes:&uniforms.passes[Axis2_X]
-                               length:sizeof(uniforms.passes[Axis2_X])
-                      attributeStride:sizeof(uniforms.passes[Axis2_X])
-                              atIndex:0];
-          [mtl_encoder_downsample setFragmentBytes:&uniforms.passes[Axis2_X]
-                                 length:sizeof(uniforms.passes[Axis2_X])
-                                atIndex:0];
-          [mtl_encoder_downsample setFragmentBytes:&uniforms.kernel
-                                 length:sizeof(uniforms.kernel)
-                                atIndex:1];
-          [mtl_encoder_downsample drawPrimitives:MTLPrimitiveTypeTriangleStrip
-                          vertexStart:0
-                          vertexCount:4];
-          [mtl_encoder_downsample endEncoding];
-
-          // brt: horizontal pass
-          mtl_pass_desc.colorAttachments[0].texture = wnd->scratch_color_2x_downsample_2;
-          mtl_pass_desc.colorAttachments[0].loadAction = MTLLoadActionClear;
-          mtl_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-          id<MTLRenderCommandEncoder> mtl_encoder_x = [mtl_command_buffer renderCommandEncoderWithDescriptor:mtl_pass_desc];
-          [mtl_encoder_x setViewport:half_viewport];
-          [mtl_encoder_x setRenderPipelineState:r_metal_state->blur_render_pipeline_state];
-          [mtl_encoder_x setScissorRect:half_rect];
-          [mtl_encoder_x setFragmentTexture:wnd->scratch_color_2x_downsample_1 atIndex:0];
-          [mtl_encoder_x setVertexBytes:&uniforms.passes[Axis2_X]
-                               length:sizeof(uniforms.passes[Axis2_X])
-                      attributeStride:sizeof(uniforms.passes[Axis2_X])
-                              atIndex:0];
-          [mtl_encoder_x setFragmentBytes:&uniforms.passes[Axis2_X]
-                                 length:sizeof(uniforms.passes[Axis2_X])
-                                atIndex:0];
-          [mtl_encoder_x setFragmentBytes:&uniforms.kernel
-                                 length:sizeof(uniforms.kernel)
-                                atIndex:1];
-          [mtl_encoder_x drawPrimitives:MTLPrimitiveTypeTriangleStrip
-                          vertexStart:0
-                          vertexCount:4];
-          [mtl_encoder_x endEncoding];
-
-          // brt: vertical pass
-          mtl_pass_desc.colorAttachments[0].texture = wnd->scratch_color_2x_downsample_1;
-          mtl_pass_desc.colorAttachments[0].loadAction = MTLLoadActionClear;
-          mtl_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-          id<MTLRenderCommandEncoder> mtl_encoder_y = [mtl_command_buffer renderCommandEncoderWithDescriptor:mtl_pass_desc];
-          [mtl_encoder_y setViewport:half_viewport];
-          [mtl_encoder_y setRenderPipelineState:r_metal_state->blur_render_pipeline_state];
-          [mtl_encoder_y setScissorRect:half_rect];
-          [mtl_encoder_y setFragmentTexture:wnd->scratch_color_2x_downsample_2 atIndex:0];
-          [mtl_encoder_y setVertexBytes:&uniforms.passes[Axis2_Y]
-                               length:sizeof(uniforms.passes[Axis2_Y])
-                      attributeStride:sizeof(uniforms.passes[Axis2_Y])
-                              atIndex:0];
-          [mtl_encoder_y setFragmentBytes:&uniforms.passes[Axis2_Y]
-                                 length:sizeof(uniforms.passes[Axis2_Y])
-                                atIndex:0];
-          [mtl_encoder_y setFragmentBytes:&uniforms.kernel
-                                 length:sizeof(uniforms.kernel)
-                                atIndex:1];
-          [mtl_encoder_y drawPrimitives:MTLPrimitiveTypeTriangleStrip
-                          vertexStart:0
-                          vertexCount:4];
-          [mtl_encoder_y endEncoding];
-
-          // brt: tint, vibrance & composite pass
-          uniforms.passes[Axis2_X].viewport_size = v2f32(resolution.x, resolution.y);
-          uniforms.passes[Axis2_X].rect          = params->rect;
-          uniforms.passes[Axis2_X].direction     = v2f32(1.f / (resolution.x), 0);
-          uniforms.passes[Axis2_X].vibrance      = vibrance;
-          MemoryCopyArray(uniforms.passes[Axis2_X].corner_radii.v, params->corner_radii);
-
-          mtl_pass_desc.colorAttachments[0].texture = wnd->stage_color;
-          mtl_pass_desc.colorAttachments[0].loadAction = MTLLoadActionLoad;
-          mtl_pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-          id<MTLRenderCommandEncoder> mtl_encoder_composite = [mtl_command_buffer renderCommandEncoderWithDescriptor:mtl_pass_desc];
-          [mtl_encoder_composite setViewport:viewport];
-          [mtl_encoder_composite setRenderPipelineState:r_metal_state->blur_composite_render_pipeline_state];
-          [mtl_encoder_composite setScissorRect:rect];
-          [mtl_encoder_composite setFragmentTexture:wnd->scratch_color_2x_downsample_1 atIndex:0];
-          [mtl_encoder_composite setVertexBytes:&uniforms.passes[Axis2_X]
-                               length:sizeof(uniforms.passes[Axis2_X])
-                      attributeStride:sizeof(uniforms.passes[Axis2_X])
-                              atIndex:0];
-          [mtl_encoder_composite setFragmentBytes:&uniforms.passes[Axis2_X]
-                                 length:sizeof(uniforms.passes[Axis2_X])
-                                atIndex:0];
-          [mtl_encoder_composite setFragmentBytes:&uniforms.kernel
-                                 length:sizeof(uniforms.kernel)
-                                atIndex:1];
-          [mtl_encoder_composite drawPrimitives:MTLPrimitiveTypeTriangleStrip
-                          vertexStart:0
-                          vertexCount:4];
-          [mtl_encoder_composite endEncoding];
+          Vec2F32 dims = dim_2f32(params->rect);
+          blur.clipRect = MTLRegionMake2D(params->rect.min.x, params->rect.min.y, dims.x, dims.y);
+          blur.offset = (MPSOffset){params->rect.min.x, params->rect.min.y, 0};
+#if 0
+          [blur encodeToCommandBuffer:wnd->command_buffer
+                        sourceTexture:wnd->stage_color
+                   destinationTexture:wnd->stage_blur];
+#else
+          [blur encodeToCommandBuffer:wnd->command_buffer
+                       inPlaceTexture:&wnd->stage_color
+                fallbackCopyAllocator:0];
 #endif
+          [blur autorelease];
         } break;
       }
     }
