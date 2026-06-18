@@ -513,7 +513,7 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
       //[ns_window center];
       w->custom_border = 1;
       w->paint_arena = arena_alloc();
-#if 0
+#if 1
       [[ns_window standardWindowButton:NSWindowCloseButton] setHidden:YES];
       [[ns_window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
       [[ns_window standardWindowButton:NSWindowZoomButton] setHidden:YES];

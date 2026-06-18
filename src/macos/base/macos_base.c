@@ -564,7 +564,7 @@ file_iter_next(Arena *arena, FileIter *iter, FileInfo *info_out)
 {
   B32 good = 0;
   MAC_FileIter *mac_iter = (MAC_FileIter *)iter->memory;
-  for(;;)
+  for(;mac_iter->dir != 0;)
   {
     // rjf: get next entry
     mac_iter->dp = readdir(mac_iter->dir);
@@ -635,7 +635,10 @@ internal void
 file_iter_end(FileIter *iter)
 {
   MAC_FileIter *mac_iter = (MAC_FileIter *)iter->memory;
-  closedir(mac_iter->dir);
+  if (mac_iter->dir != 0)
+  {
+    closedir(mac_iter->dir);
+  }
 }
 
 //- rjf: directory creation
