@@ -7266,17 +7266,28 @@ rd_window_frame(void)
           ui_set_next_flags(UI_BoxFlag_Clip|UI_BoxFlag_ViewScrollX|UI_BoxFlag_ViewClamp);
           UI_WidthFill UI_NamedRow(str8_lit("###menu_bar"))
           {
-            //- rjf: icon
-            UI_Padding(ui_em(0.5f, 1.f))
+            if(OS_MAC)
             {
-              UI_PrefWidth(ui_px(dim_2f32(top_bar_rect).y - ui_top_font_size()*0.8f, 1.f))
-                UI_Column
-                UI_Padding(ui_em(0.4f, 1.f))
-                UI_HeightFill
+              //- yuraiz: space for the titlebar buttons
+              if(!wm_window_is_fullscreen(ws->os))
               {
-                R_Handle texture = rd_state->icon_texture;
-                Vec2S32 texture_dim = r_size_from_tex2d(texture);
-                ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
+                F32 top_bar_height = dim_2f32(top_bar_rect).y;
+                ui_spacer(ui_px(top_bar_height * 0.5 + 120.0, 1));
+              }
+            }
+            else {
+              //- rjf: icon
+              UI_Padding(ui_em(0.5f, 1.f))
+              {
+                UI_PrefWidth(ui_px(dim_2f32(top_bar_rect).y - ui_top_font_size()*0.8f, 1.f))
+                  UI_Column
+                  UI_Padding(ui_em(0.4f, 1.f))
+                  UI_HeightFill
+                {
+                  R_Handle texture = rd_state->icon_texture;
+                  Vec2S32 texture_dim = r_size_from_tex2d(texture);
+                  ui_image(texture, R_Tex2DSampleKind_Linear, r2f32p(0, 0, texture_dim.x, texture_dim.y), v4f32(1, 1, 1, 1), 0, str8_lit(""));
+                }
               }
             }
             
@@ -7814,51 +7825,54 @@ rd_window_frame(void)
           }
           
           // rjf: min/max/close buttons
-          UI_TagF("implicit")
-            UI_TagF("weak")
-            UI_VisualMargin(ui_top_font_size()*0.5f)
-            UI_CornerRadius(ui_top_font_size()*0.9f)
+          if(!OS_MAC)
           {
-            UI_Signal min_sig = {0};
-            UI_Signal max_sig = {0};
-            UI_Signal cls_sig = {0};
-            Vec2F32 bar_dim = dim_2f32(top_bar_rect);
-            F32 button_dim = floor_f32(bar_dim.y);
-            UI_PrefWidth(ui_px(button_dim, 1.f))
-              UI_FontSize(ui_top_font_size()*0.75f)
+            UI_TagF("implicit")
+              UI_TagF("weak")
+              UI_VisualMargin(ui_top_font_size()*0.5f)
+              UI_CornerRadius(ui_top_font_size()*0.9f)
             {
-              min_sig = rd_icon_buttonf(RD_IconKind_WindowMinimize,  0, "##minimize");
-              max_sig = rd_icon_buttonf(wm_window_is_maximized(ws->os) ? RD_IconKind_WindowRestore : RD_IconKind_Window, 0, "##maximize");
-            }
-            UI_PrefWidth(ui_px(button_dim, 1.f))
-              UI_FontSize(ui_top_font_size()*0.85f)
-              // UI_TagF("bad_pop")
-            {
-              cls_sig = rd_icon_buttonf(RD_IconKind_X, 0, "##close");
-            }
-            if(ui_clicked(min_sig))
-            {
-              wm_window_set_minimized(ws->os, 1);
-            }
-            if(ui_clicked(max_sig))
-            {
-              wm_window_set_maximized(ws->os, !wm_window_is_maximized(ws->os));
-            }
-            if(ui_clicked(cls_sig))
-            {
-              if(ws->order_next != &rd_nil_window_state ||
-                 ws->order_prev != &rd_nil_window_state)
+              UI_Signal min_sig = {0};
+              UI_Signal max_sig = {0};
+              UI_Signal cls_sig = {0};
+              Vec2F32 bar_dim = dim_2f32(top_bar_rect);
+              F32 button_dim = floor_f32(bar_dim.y);
+              UI_PrefWidth(ui_px(button_dim, 1.f))
+                UI_FontSize(ui_top_font_size()*0.75f)
               {
-                ui_ctx_menu_open(close_ctx_menu_key, cls_sig.box->key, v2f32(0, dim_2f32(cls_sig.box->rect).y));
+                min_sig = rd_icon_buttonf(RD_IconKind_WindowMinimize,  0, "##minimize");
+                max_sig = rd_icon_buttonf(wm_window_is_maximized(ws->os) ? RD_IconKind_WindowRestore : RD_IconKind_Window, 0, "##maximize");
               }
-              else
+              UI_PrefWidth(ui_px(button_dim, 1.f))
+                UI_FontSize(ui_top_font_size()*0.85f)
+                // UI_TagF("bad_pop")
               {
-                rd_cmd(RD_CmdKind_Exit);
+                cls_sig = rd_icon_buttonf(RD_IconKind_X, 0, "##close");
               }
+              if(ui_clicked(min_sig))
+              {
+                wm_window_set_minimized(ws->os, 1);
+              }
+              if(ui_clicked(max_sig))
+              {
+                wm_window_set_maximized(ws->os, !wm_window_is_maximized(ws->os));
+              }
+              if(ui_clicked(cls_sig))
+              {
+                if(ws->order_next != &rd_nil_window_state ||
+                  ws->order_prev != &rd_nil_window_state)
+                {
+                  ui_ctx_menu_open(close_ctx_menu_key, cls_sig.box->key, v2f32(0, dim_2f32(cls_sig.box->rect).y));
+                }
+                else
+                {
+                  rd_cmd(RD_CmdKind_Exit);
+                }
+              }
+              wm_window_push_custom_title_bar_client_area(ws->os, min_sig.box->rect);
+              wm_window_push_custom_title_bar_client_area(ws->os, max_sig.box->rect);
+              wm_window_push_custom_title_bar_client_area(ws->os, pad_2f32(cls_sig.box->rect, 2.f));
             }
-            wm_window_push_custom_title_bar_client_area(ws->os, min_sig.box->rect);
-            wm_window_push_custom_title_bar_client_area(ws->os, max_sig.box->rect);
-            wm_window_push_custom_title_bar_client_area(ws->os, pad_2f32(cls_sig.box->rect, 2.f));
           }
         }
       }
