@@ -1084,7 +1084,10 @@ wm_get_events(Arena *arena, B32 wait)
           event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
 
           //- yuraiz: drag window by the titlebar
-          window->dragging_window = 0;
+          if (window != 0)
+          {
+            window->dragging_window = 0;
+          }
           if (event->key == WM_Key_LeftMouseButton && !release)
           {
             Vec2F32 pos_client = event->pos;
