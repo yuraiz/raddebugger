@@ -263,6 +263,18 @@ rb_thread_entry_point(void *p)
           }
         }
         
+        //- rjf: MACH-O magic -> MACH-O
+        if(file_format == RB_FileFormat_Null)
+        {
+          U8 identifier_maybe[4] = {0};
+          file_read(file, r1u64(0, sizeof(identifier_maybe)), identifier_maybe);
+          B32 is_mach_magic = str8_match(str8(identifier_maybe, mach_magic_string.size), mach_magic_string, 0);
+          if(is_mach_magic)
+          {
+            file_format = RB_FileFormat_MACHO;
+          }
+        }
+        
         //- rjf: RDI magic -> RDI input
         if(file_format == RB_FileFormat_Null)
         {
@@ -403,6 +415,22 @@ rb_thread_entry_point(void *p)
         Temp scratch = scratch_begin(&arena, 1);
         ELF_Bin elf_bin = elf_bin_from_data(scratch.arena, file_data);
         if(dw_is_dwarf_present_from_elf_bin(file_data, &elf_bin))
+        {
+          log_infof("DWARF data detected in %S (%S)\n", n->string, rb_file_format_display_name_table[file_format]);
+          file_format_flags |= RB_FileFormatFlag_HasDWARF;
+        }
+        scratch_end(scratch);
+      }
+
+      //////////////////////////
+      //- rjf: MACH-O => check if contains DWARF
+      //
+      if(file_format == RB_FileFormat_MACHO)
+      {
+        Temp scratch = scratch_begin(&arena, 1);
+        // TODO(yuraiz): Check that thing
+        MACH_Bin mach_bin = mach_bin_read_from_file(scratch.arena, n->string);
+        if(dw_is_dwarf_present_from_mach_bin(mach_bin))
         {
           log_infof("DWARF data detected in %S (%S)\n", n->string, rb_file_format_display_name_table[file_format]);
           file_format_flags |= RB_FileFormatFlag_HasDWARF;
@@ -724,12 +752,15 @@ rb_thread_entry_point(void *p)
                           input_files_from_format_table[RB_FileFormat_PE].first->v->format_flags & RB_FileFormatFlag_HasDWARF);
         B32 elf_w_dwarf = (input_files_from_format_table[RB_FileFormat_ELF32].count != 0 ||
                            input_files_from_format_table[RB_FileFormat_ELF64].count != 0);
-        if(pe_w_dwarf || elf_w_dwarf)
+        B32 macho_w_dwarf = (input_files_from_format_table[RB_FileFormat_MACHO].count != 0 &&
+                             input_files_from_format_table[RB_FileFormat_MACHO].first->v->format_flags & RB_FileFormatFlag_HasDWARF);
+        if(macho_w_dwarf || pe_w_dwarf || elf_w_dwarf)
         {
           convert_done = 1;
           if(0){}
-          else if(pe_w_dwarf)  { log_infof("PEs w/ DWARF specified; converting DWARF data to RDI\n"); }
-          else if(elf_w_dwarf) { log_infof("ELFs specified; converting DWARF data to RDI\n"); }
+          else if(pe_w_dwarf)    { log_infof("PEs w/ DWARF specified; converting DWARF data to RDI\n"); }
+          else if(elf_w_dwarf)   { log_infof("ELFs specified; converting DWARF data to RDI\n"); }
+          else if(macho_w_dwarf) { log_infof("MACH-O w/ DWARF specified; converting DWARF data to RDI\n"); }
           
           // rjf: convert
           D2R_ConvertParams convert_params = {0};
@@ -754,6 +785,23 @@ rb_thread_entry_point(void *p)
                   exe_name = n->v->path;
                   exe_data = n->v->data;
                   exe_kind = ExecutableImageKind_CoffPe;
+                  break;
+                }
+              }
+            }
+            if(!got_exe && !got_dbg)
+            {
+              for(RB_FileNode *n = input_files_from_format_table[RB_FileFormat_MACHO].first; n != 0; n = n->next)
+              {
+                if(n->v->format_flags & RB_FileFormatFlag_HasDWARF)
+                {
+                  got_exe = 1;
+                  got_dbg = 1;
+                  dbg_name = n->v->path;
+                  dbg_data = n->v->data;
+                  exe_name = n->v->path;
+                  exe_data = n->v->data;
+                  exe_kind = ExecutableImageKind_Macho;
                   break;
                 }
               }
@@ -839,6 +887,18 @@ rb_thread_entry_point(void *p)
                 convert_params.raw = dw_raw_from_elf_bin(arena, dbg_data, &bin);
                 convert_params.path_style = PathStyle_UnixAbsolute;
                 convert_params.binary_sections = e2r_rdi_binary_sections_from_elf_section_table(arena, dbg_data, &bin, &bin.shdrs);
+                scratch_end(scratch);
+              }break;
+              case ExecutableImageKind_Macho:
+              {
+                Temp scratch = scratch_begin(&arena, 1);
+                MACH_Bin mach_bin = mach_bin_read_from_file(scratch.arena, dbg_name);
+                convert_params.arch = Arch_arm64;
+                convert_params.base_vaddr = mach_compute_image_offset(mach_bin);
+                convert_params.raw = dw_raw_from_mach_bin(scratch.arena, mach_bin, dbg_data);
+                convert_params.path_style = PathStyle_Relative;
+                // TODO(yuraiz): Implement binary sections
+                // convert_params.binary_sections = e2r_rdi_binary_sections_from_elf_section_table(arena, dbg_data, &bin, &bin.shdrs);
                 scratch_end(scratch);
               }break;
             }
@@ -938,6 +998,8 @@ rb_thread_entry_point(void *p)
         if(output_path__noext.size == 0) { output_path__noext = str8_chop_last_dot(rb_file_list_first(&input_files_from_format_table[RB_FileFormat_PE])->path); }
         if(output_path__noext.size == 0) { output_path__noext = str8_chop_last_dot(rb_file_list_first(&input_files_from_format_table[RB_FileFormat_ELF64])->path); }
         if(output_path__noext.size == 0) { output_path__noext = str8_chop_last_dot(rb_file_list_first(&input_files_from_format_table[RB_FileFormat_ELF32])->path); }
+        // TODO(yuraiz): strip .dSYM/Contents/Resources/DWARF/..
+        if(output_path__noext.size == 0) { output_path__noext = str8_chop_last_dot(rb_file_list_first(&input_files_from_format_table[RB_FileFormat_MACHO])->path); }
         if(output_path__noext.size == 0) { output_path__noext = str8_chop_last_dot(rb_file_list_first(&input_files_from_format_table[RB_FileFormat_RDI])->path); }
         switch(output_kind)
         {
@@ -1461,6 +1523,11 @@ rb_thread_entry_point(void *p)
             {
               dw = dw_raw_from_elf_bin(arena, f->data, &elf);
             }
+            else if(f->format == RB_FileFormat_MACHO)
+            {
+              MACH_Bin mach_bin = mach_bin_read_from_file(arena, f->path);
+              dw = dw_raw_from_mach_bin(arena, mach_bin, f->data);
+            }
           }
         }
         
@@ -1506,6 +1573,11 @@ rb_thread_entry_point(void *p)
           {
             String8List elf_strings = elf_dump(arena, f->data, elf_dump_subset_flags);
             str8_list_concat_in_place(&output_blobs, &elf_strings);
+          }break;
+
+          case RB_FileFormat_MACHO:
+          {
+            // TODO(yuraiz): Dump the data
           }break;
           
           //- rjf: RDI file
