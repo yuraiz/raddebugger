@@ -1,0 +1,731 @@
+///////////////////////////////////////////////////////////////////////////////
+//~ brt: Shaders
+
+@embed_string r_metal_g_shaders_src:
+"""
+#include <metal_stdlib>
+using namespace metal;
+
+#define internal 
+
+struct PerDraw
+{
+  float2 viewport_size_px;
+  float opacity;
+  float _padding0_;
+  float4x4 texture_sample_channel_map;
+  float2 texture_t2d_size_px;
+  float2 translate;
+  float3x3 xform;
+  float2 xform_scale;
+};
+
+struct CPU2Vertex
+{
+  float4 dst_rect_px;
+  float4 src_rect_px;
+  float4 color00;
+  float4 color01;
+  float4 color10;
+  float4 color11;
+  float4 corner_radii_px;
+  float4 style_params; // x: border_thickness_px, y: softness_px, z: omit_texture, w: shear
+};
+
+struct Vertex2Pixel
+{
+  float4 position [[position]];
+  float2 rect_half_size_px [[flat]];
+  float2 p2_px [[flat]];
+  float2 texcoord_pct;
+  float2 sdf_sample_pos;
+  float4 tint;
+  float corner_radius_px;
+  float border_thickness_px [[flat]];
+  float softness_px [[flat]];
+  float omit_texture [[flat]];
+};
+
+struct RectPixelOut
+{
+  float4 color [[color(0)]];
+};
+
+float rect_sdf( float2 sample_pos, float2 rect_half_size, float r )
+{
+  return length(max(abs(sample_pos) - rect_half_size + r, 0.0)) - r;
+}
+
+float line_segment_sdf( float2 p, float2 a, float2 b, float r )
+{
+  float2 pa = p - a;
+  float2 ba = b - a;
+  float h = clamp(dot(pa, ba)/dot(ba,ba), 0.0, 1.0);
+  float2 n = a + ba * h;
+  return length(p - n) - r;
+}
+
+float linear_from_srgb_f32(float x)
+{
+  return x < 0.0404482362771082 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4);
+}
+
+float4 linear_from_srgba( float4 v )
+{
+  float4 result = float4(linear_from_srgb_f32(v.x),
+                         linear_from_srgb_f32(v.y),
+                         linear_from_srgb_f32(v.z),
+                         v.w);
+  return result;
+}
+
+float3 vibrance( float3 c, float v )
+{
+  // Convert to perceptual luminance
+  float l = dot(c, float3(0.2126, 0.7152, 0.0722));
+
+  // Pure chroma vector (direction of hue)
+  float3 chroma = c - float3(l);
+
+  // Chroma magnitude = saturation strength
+  float sat = length(chroma);
+
+  // Selective saturation: boost low saturation more than high
+  float factor;
+
+  if (v > 0.0)
+  {
+    // Positive vibrance: scale contribution based on saturation
+    factor = 1.0 + v * (1.0 - saturate(sat));
+  }
+  else
+  {
+    // Negative vibrance: proportionally suppress chroma
+    factor = 1.0 + v; // simple, stable, hue-preserving
+  }
+
+  return float3(l) + chroma * factor;
+}
+
+vertex Vertex2Pixel
+vs_rect( const ushort vert_id [[ vertex_id ]],
+         const uint inst_id [[ instance_id ]],
+         const device PerDraw &globals [[ buffer(0) ]],
+         const device CPU2Vertex *verts [[ buffer(1) ]] )
+{
+  CPU2Vertex cpu2vertex = verts[inst_id];
+
+  float2 dst_p0_px = cpu2vertex.dst_rect_px.xy;
+  float2 dst_p1_px = cpu2vertex.dst_rect_px.zw;
+  float2 src_p0_px = cpu2vertex.src_rect_px.xy;
+  float2 src_p1_px = cpu2vertex.src_rect_px.zw;
+  float2 dst_size_px = abs(dst_p1_px - dst_p0_px);
+
+  float border_thickness_px = cpu2vertex.style_params.x;
+  float softness_px = cpu2vertex.style_params.y;
+  float omit_texture = cpu2vertex.style_params.z;
+  float shear_px = cpu2vertex.style_params.w;
+
+  float2 dst_p_verts_px[] =
+  {
+    float2(dst_p0_px.x, dst_p1_px.y),
+    float2(dst_p0_px.x, dst_p0_px.y),
+    float2(dst_p1_px.x, dst_p1_px.y + shear_px),
+    float2(dst_p1_px.x, dst_p0_px.y + shear_px),
+  };
+
+  float2 src_p_verts_px[] =
+  {
+    float2(src_p0_px.x, src_p1_px.y),
+    float2(src_p0_px.x, src_p0_px.y),
+    float2(src_p1_px.x, src_p1_px.y),
+    float2(src_p1_px.x, src_p0_px.y),
+  };
+
+  float dst_r_verts_px[] =
+  {
+    cpu2vertex.corner_radii_px.y,
+    cpu2vertex.corner_radii_px.x,
+    cpu2vertex.corner_radii_px.w,
+    cpu2vertex.corner_radii_px.z,
+  };
+
+  float4 src_color[] =
+  {
+    cpu2vertex.color01,
+    cpu2vertex.color00,
+    cpu2vertex.color11,
+    cpu2vertex.color10,
+  };
+
+  float2 dst_verts_pct = float2((vert_id >> 1) ? 1.0f : 0.0f,
+                                (vert_id & 1)  ? 0.0f : 1.0f);
+
+  Vertex2Pixel vertex2pixel;
+  {
+    float2 xformed_pos = (globals.xform * float3(dst_p_verts_px[vert_id], 1.0f)).xy;
+    xformed_pos.y = globals.viewport_size_px.y - xformed_pos.y;
+    vertex2pixel.position.xy = 2.0f * xformed_pos/globals.viewport_size_px - 1.0f;
+    vertex2pixel.position.z = 0.0;
+    vertex2pixel.position.w = 1.0;
+    //- brt: line segment
+    if (omit_texture == 2.f)
+    {
+      vertex2pixel.rect_half_size_px = src_p0_px;
+      vertex2pixel.p2_px = src_p1_px;
+      vertex2pixel.sdf_sample_pos = dst_p_verts_px[vert_id];
+    }
+    else
+    {
+      vertex2pixel.rect_half_size_px = dst_size_px / 2.0f * globals.xform_scale;
+      vertex2pixel.sdf_sample_pos = (2.0f * dst_verts_pct - 1.0f) * vertex2pixel.rect_half_size_px;
+    }
+    vertex2pixel.texcoord_pct = src_p_verts_px[vert_id] / globals.texture_t2d_size_px;
+    vertex2pixel.tint = src_color[vert_id];
+    vertex2pixel.corner_radius_px = dst_r_verts_px[vert_id];
+    vertex2pixel.border_thickness_px = border_thickness_px;
+    vertex2pixel.softness_px = softness_px;
+    vertex2pixel.omit_texture = omit_texture;
+  }
+  return vertex2pixel;
+}
+
+fragment RectPixelOut
+fs_rect( Vertex2Pixel vertex2pixel [[ stage_in ]],
+         constant PerDraw &globals [[ buffer(0) ]],
+         texture2d<float> texture [[ texture(0) ]],
+         sampler tex_sampler [[ sampler(0) ]])
+{
+  float4 tint = vertex2pixel.tint;
+
+  float4 albedo_sample = float4(1.0, 1.0, 1.0, 1.0);
+  if (vertex2pixel.omit_texture < 1.0)
+  {
+    albedo_sample = texture.sample(tex_sampler, vertex2pixel.texcoord_pct) * globals.texture_sample_channel_map;
+    albedo_sample = linear_from_srgba(albedo_sample);
+  }
+
+  float2 sdf_sample_pos = vertex2pixel.sdf_sample_pos;
+
+  float4 final_color = albedo_sample;
+  final_color *= tint;
+
+  //- brt: line segment
+  if (vertex2pixel.omit_texture == 2.f)
+  {
+    float2 p0 = vertex2pixel.rect_half_size_px;
+    float2 p1 = vertex2pixel.p2_px;
+    float line_sdf_t = line_segment_sdf(sdf_sample_pos, p0, p1, vertex2pixel.border_thickness_px*0.5f);
+    line_sdf_t = smoothstep(0, 2.0*vertex2pixel.softness_px, line_sdf_t);
+    if (line_sdf_t >= 1.f)
+    {
+      discard_fragment();
+    }
+    final_color.a *= 1.f-line_sdf_t;
+  }
+
+  //- brt: rectangle
+  else
+  {
+    float border_sdf_t = 1;
+    if (vertex2pixel.border_thickness_px > 0)
+    {
+      float border_sdf_s = rect_sdf(sdf_sample_pos,
+          vertex2pixel.rect_half_size_px - float2(vertex2pixel.softness_px*2.0f, vertex2pixel.softness_px*2.0f) - vertex2pixel.border_thickness_px, max(vertex2pixel.corner_radius_px-vertex2pixel.border_thickness_px, 0.0f));
+      border_sdf_t = smoothstep(0, 2*vertex2pixel.softness_px, border_sdf_s);
+    }
+
+    if (border_sdf_t < 0.001f)
+    {
+      discard_fragment();
+    }
+
+    float corner_sdf_t = 1.0f;
+    if (vertex2pixel.corner_radius_px > 0 || vertex2pixel.softness_px > 0.75f)
+    {
+      float corner_sdf_s = rect_sdf(sdf_sample_pos,
+          vertex2pixel.rect_half_size_px - float2(vertex2pixel.softness_px*2.0f, vertex2pixel.softness_px*2.0f), vertex2pixel.corner_radius_px);
+      corner_sdf_t = 1.0 - smoothstep(0, 2*vertex2pixel.softness_px, corner_sdf_s);
+    }
+
+    final_color.a *= globals.opacity;
+    final_color.a *= corner_sdf_t;
+    final_color.a *= border_sdf_t;
+  }
+
+  RectPixelOut out;
+  out.color = final_color;
+  return out;
+}
+
+struct Blur_Globals
+{
+  float4 rect;
+  float4 corner_radii_px;
+  float2 direction;
+  float2 viewport_size;
+  int blur_count;
+  float tint_t;
+  float vibrance;
+};
+
+struct Blur_Kernel
+{
+  float4 v[32];
+};
+
+struct Blur_Vertex2Pixel
+{
+  float4 position [[position]];
+  float2 texcoord;
+  float2 sdf_sample_pos;
+  float2 rect_half_size [[flat]];
+  float corner_radius;
+};
+
+struct Blur_PixelOut
+{
+  float4 color[[color(0)]];
+};
+
+vertex Blur_Vertex2Pixel
+vs_blur( const ushort vert_id [[ vertex_id ]],
+         const device Blur_Globals &globals [[ buffer(0) ]])
+{
+  float4 rect = globals.rect;
+  float4 corner_radii_px = globals.corner_radii_px;
+  float2 viewport_size = globals.viewport_size;
+
+  float2 vertex_positions__scrn[] =
+  {
+    rect.xw,
+    rect.xy,
+    rect.zw,
+    rect.zy,
+  };
+  float corner_radii__px[] =
+  {
+    corner_radii_px.y,
+    corner_radii_px.x,
+    corner_radii_px.w,
+    corner_radii_px.z,
+  };
+  float2 cornercoords__pct = float2((vert_id >> 1) ? 1.f : 0.f,
+                                    (vert_id & 1)  ? 0.f : 1.f);
+
+  float2 vertex_position__pct = vertex_positions__scrn[vert_id] / viewport_size;
+  float2 vertex_position__scr = 2.f * vertex_position__pct - 1.f;
+
+  float2 rect_half_size = float2((rect.z-rect.x)/2, (rect.w-rect.y)/2);
+
+  Blur_Vertex2Pixel v2p;
+  {
+    v2p.position = float4(vertex_position__scr.x, -vertex_position__scr.y, 0.f, 1.f);
+    v2p.texcoord = vertex_position__pct;
+    v2p.sdf_sample_pos = (2.f * cornercoords__pct - 1.f) * rect_half_size;
+    v2p.rect_half_size = rect_half_size - 2.f;
+    v2p.corner_radius = corner_radii__px[vert_id];
+  }
+  return v2p;
+}
+
+fragment float4
+fs_downsample_2x( Blur_Vertex2Pixel v2p [[ stage_in ]],
+                  const device Blur_Globals &globals [[ buffer(0) ]],
+                  texture2d<float> stage_t2d [[ texture(0) ]])
+{
+  constexpr sampler bilinear(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+  float2 uv = v2p.texcoord;
+  float2 texel = 1.0 / float2(stage_t2d.get_width(), stage_t2d.get_height());
+  //- brt: 4-tap tent filter
+  float3 c = 
+    stage_t2d.sample(bilinear, uv + texel*float2(-0.5, -0.5)).rgb +
+    stage_t2d.sample(bilinear, uv + texel*float2( 0.5, -0.5)).rgb +
+    stage_t2d.sample(bilinear, uv + texel*float2(-0.5,  0.5)).rgb +
+    stage_t2d.sample(bilinear, uv + texel*float2( 0.5,  0.5)).rgb;
+
+  //- brt: sample for corners
+  float corner_sdf_s = rect_sdf(v2p.sdf_sample_pos, v2p.rect_half_size, v2p.corner_radius);
+  float corner_sdf_t = 1-smoothstep(0, 2, corner_sdf_s);
+
+  //- brt: weight output color by sdf
+  // this is doing alpha testing, leave blurring only where mostly opaque pixels are
+  if (corner_sdf_t < 0.9f)
+  {
+    discard_fragment();
+  }
+
+  return float4(c*0.25, 1.0);
+}
+
+fragment Blur_PixelOut
+fs_blur( Blur_Vertex2Pixel v2p [[ stage_in ]],
+         const device Blur_Globals &globals [[ buffer(0) ]],
+         const device Blur_Kernel &blur_kernel [[ buffer(1) ]],
+         texture2d<float> stage_t2d [[ texture(0) ]])
+{
+  Blur_PixelOut out;
+  
+  constexpr sampler stage_sampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+  float2 direction = globals.direction;
+  int blur_count = globals.blur_count;
+
+  //- brt: blend weighted texture samples into color
+  float3 color = blur_kernel.v[0].x * stage_t2d.sample(stage_sampler, v2p.texcoord).rgb;
+
+  for (int i = 1; i < blur_count; i++)
+  {
+    float weight = blur_kernel.v[i].x;
+    float offset = blur_kernel.v[i].y;
+    color += weight * stage_t2d.sample(stage_sampler, v2p.texcoord - offset * direction).rgb;
+    color += weight * stage_t2d.sample(stage_sampler, v2p.texcoord + offset * direction).rgb;
+  }
+
+  //- brt: sample for corners
+  float corner_sdf_s = rect_sdf(v2p.sdf_sample_pos, v2p.rect_half_size, v2p.corner_radius);
+  float corner_sdf_t = 1-smoothstep(0, 2, corner_sdf_s);
+
+  //- brt: weight output color by sdf
+  // this is doing alpha testing, leave blurring only where mostly opaque pixels are
+  if (corner_sdf_t < 0.9f)
+  {
+    discard_fragment();
+  }
+
+  //color = vibrance(color, globals.vibrance);
+  out.color = float4(color, 1.f);
+  return out;
+}
+
+fragment float4
+fs_blur_composite( Blur_Vertex2Pixel v2p [[ stage_in ]],
+                  const device Blur_Globals &globals [[ buffer(0) ]],
+                  texture2d<float> stage_t2d [[ texture(0) ]])
+{
+  constexpr sampler stage_sampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+  float3 sample = stage_t2d.sample(stage_sampler, v2p.texcoord).rgb;
+  float3 color = sample;
+  //- brt: vibrance
+  color = vibrance(color, globals.vibrance);
+  //- brt: tint
+  color = pow(color, 1.0/2.2);
+
+  float3 tint = float3(1,1,1);
+  float tint_power = 0.12;
+  if (globals.vibrance < 0)
+  {
+    tint = float3(0,0,0);
+    tint_power = 0.25;
+  }
+  color = mix(color, tint, tint_power*globals.tint_t);
+  color = pow(color, 2.2);
+
+  //- brt: sample for corners
+  float corner_sdf_s = rect_sdf(v2p.sdf_sample_pos, v2p.rect_half_size, v2p.corner_radius);
+  float corner_sdf_t = 1-smoothstep(0, 2, corner_sdf_s);
+
+  //- brt: weight output color by sdf
+  // this is doing alpha testing, leave blurring only where mostly opaque pixels are
+  if (corner_sdf_t < 0.9f)
+  {
+    discard_fragment();
+  }
+
+  return float4(color, 1.0);
+
+}
+
+struct Mesh_Globals
+{
+  float4x4 xform;
+};
+
+struct Mesh_CPU2Vertex
+{
+  packed_float3 position;
+  packed_float3 normal;
+  packed_float2 texcoord;
+  float stddev;
+  packed_float3 color;
+};
+
+struct Mesh_Vertex2Pixel
+{
+  float4 position [[position]];
+  float3 world_position;
+  float3 normal;
+  float2 texcoord;
+  float tenor;
+  float stddev;
+  float3 color;
+};
+
+vertex Mesh_Vertex2Pixel
+vs_mesh( const uint vert_id [[vertex_id]],
+         constant Mesh_Globals &globals [[buffer(1)]],
+         constant float4x4 &test_mat [[buffer(2)]],
+         const device Mesh_CPU2Vertex *verts [[buffer(0)]] )
+{
+  Mesh_CPU2Vertex c2v = verts[vert_id];
+  Mesh_Vertex2Pixel v2p;
+  float4 p_homo = float4(c2v.position, 1.0f);
+  v2p.position = globals.xform * p_homo;
+  v2p.world_position = (test_mat * p_homo).xyz;
+  v2p.normal = c2v.normal;
+  v2p.texcoord.x = v2p.world_position.x*0.5+0.5;
+  v2p.texcoord.y = v2p.world_position.y*0.5+0.5;
+  v2p.tenor = c2v.position.x;
+  v2p.stddev = c2v.stddev;
+  v2p.color = c2v.color;
+  return v2p;
+}
+
+internal float3
+linear_from_oklab(float3 oklab)
+{
+  float l_ = oklab.x + 0.3963377774f * oklab.y + 0.2158037573f * oklab.z;
+  float m_ = oklab.x - 0.1055613458f * oklab.y - 0.0638541728f * oklab.z;
+  float s_ = oklab.x - 0.0894841775f * oklab.y - 1.2914855480f * oklab.z;
+  float l = l_*l_*l_;
+  float m = m_*m_*m_;
+  float s = s_*s_*s_;
+  float3 result;
+  result.x = +4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
+  result.y = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
+  result.z = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
+  return result;
+}
+
+internal float3
+fresnel_schlick( float cos_theta, float3 F0 )
+{
+  float3 F = F0 + (1.0f - F0) * pow(1.0f - cos_theta, 5.0f);
+  return F;
+}
+
+internal float
+D_GGX( float NoH, float roughness )
+{
+  float alpha = roughness * roughness;
+  float alpha2 = alpha * alpha;
+  float NoH2 = NoH * NoH;
+  float b = (NoH2 * (alpha2 - 1.0f) + 1.0f);
+  float D = alpha2 * M_1_PI_F / (b * b);
+  return D;
+}
+
+internal float
+G1_GGX_Schlick( float NoV, float roughness )
+{
+  float alpha = roughness * roughness;
+  float k = alpha / 2.0f;
+  return max(NoV, 0.001f) / (NoV * (1.0f - k) + k);
+}
+
+internal float
+G_Smith( float NoV, float NoL, float roughness )
+{
+  float G = G1_GGX_Schlick(NoL, roughness) * G1_GGX_Schlick(NoV, roughness);
+  return G;
+}
+
+internal float
+fresnel_schlick_90( float cos_theta, float F0, float F90 )
+{
+  float F = F0 + (F90 - F0) * pow(1.0f - cos_theta, 5.0f);
+  return F;
+}
+
+internal float
+disney_diffuse_factor ( float NoV, float NoL, float VoH, float roughness )
+{
+  float alpha = roughness * roughness;
+  float F90 = 0.5f + 2.0f * alpha * VoH * VoH;
+  float F_in = fresnel_schlick_90(NoL, 1.0f, F90);
+  float F_out = fresnel_schlick_90(NoV, 1.0f, F90);
+  float F = F_in * F_out;
+  return F;
+}
+
+internal float3
+microfacet_brdf( float3 L, float3 V, float3 N,
+                 float metallic, float roughness, float3 base_color, float reflectance )
+{
+  float3 H = normalize(V + L);
+  float NoV = clamp(0.0f, dot(N, V), 1.0f);
+  float NoL = clamp(0.0f, dot(N, L), 1.0f);
+  float NoH = clamp(0.0f, dot(N, H), 1.0f);
+  float VoH = clamp(0.0f, dot(V, H), 1.0f);
+
+  float3 f0 = float3(0.16f * (reflectance * reflectance));
+  f0 = mix(f0, base_color, metallic);
+
+  float3 F = fresnel_schlick(VoH, f0);
+  float D = D_GGX(NoH, roughness);
+  float G = G_Smith(NoV, NoL, roughness);
+
+  float3 spec = (F * D * G) / (4.0f * max(NoV, 0.001f) * max(NoL, 0.001f));
+
+  float3 rho_D = base_color;
+  rho_D *= 1.0f - F;
+  rho_D *= disney_diffuse_factor(NoV, NoL, VoH, roughness);
+  rho_D *= 1.0f - metallic;
+
+  float3 diff = rho_D * M_1_PI_F;
+  return diff + spec;
+}
+
+internal float3x3
+cotangent_frame( float3 N, float3 p, float2 uv )
+{
+  float3 dp1 = dfdx(p);
+  float3 dp2 = dfdy(p);
+  float2 duv1 = dfdx(uv);
+  float2 duv2 = dfdy(uv);
+  float3 dp2perp = cross(dp2, N);
+  float3 dp1perp = cross(N, dp1);
+  float3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+  float3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+  float invmax = rsqrt(max(dot(T,T), dot(B,B)));
+  return float3x3(T * invmax, B * invmax, N);
+}
+
+internal float3
+ldr_from_hdr__reinhard( float3 x )
+{
+  return x / (1.0f + x);
+}
+
+internal float3
+ldr_from_hdr__ACES( float3 x )
+{
+  const float a = 2.51f; 
+  const float b = 0.03f; 
+  const float c = 2.43f; 
+  const float d = 0.59f; 
+  const float e = 0.14f; 
+  return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
+}
+
+fragment float4
+fs_mesh( Mesh_Vertex2Pixel v2p [[stage_in]],
+         constant packed_float3 &light_dir [[buffer(0)]],
+         constant packed_float3 &view_pos [[buffer(1)]],
+         constant packed_float3 &stddev_hover [[buffer(2)]],
+         texture2d<float> roughness_map [[ texture(0) ]], 
+         texture2d<float> normal_map [[ texture(1) ]] )
+{
+  constexpr sampler lin_sampler(mag_filter::linear, min_filter::linear);
+
+  float3 light_color = float3(1.0f, 1.0f, 1.0f);
+  //float sample = (1.0 - smoothstep(0, 1.0, abs(v2p.stddev-stddev_hover.x))) * stddev_hover.z;
+  float sample = (1.0f - smoothstep(0, 0.1, max(stddev_hover.x - v2p.stddev, v2p.stddev - stddev_hover.y))) * stddev_hover.z;
+  float3 base_color = linear_from_oklab(v2p.color); // albedo for dielectrics or F0 for metals
+
+  float normal_map_strength = 1.0f;
+  float metallic = 0.0f;                            // 0.0 for dielectrics, 1.0 for metals [0.0, 1.0]
+  float roughness = roughness_map.sample(lin_sampler, v2p.texcoord).r;
+  float3 emission = float3(sample*0.25f);                   // RGB [0.0, 1.0]
+  float reflectance = 0.35;                         // fresnel reflectance for dielectrics [0.0, 1.0]
+  float irradiance_in_perp = 5.0f;                 // irradiance in perpendicular direction
+
+  float3 view_dir = normalize(view_pos - v2p.world_position);
+  float3 n = normalize(v2p.normal);
+  {
+    float3 high_res_normal = normal_map.sample(lin_sampler, v2p.texcoord).xyz;
+    high_res_normal = high_res_normal * 2.0f - 1.0f;
+    high_res_normal.xy *= normal_map_strength;
+    high_res_normal = normalize(high_res_normal);
+    float3x3 TBN = cotangent_frame(n, v2p.world_position, v2p.texcoord);
+    n = normalize(TBN * high_res_normal);
+  }
+
+  float3 radiance = emission;
+  float irradiance = max(dot(light_dir, n), 0.0f) * irradiance_in_perp;
+  if (irradiance > 0.0f)
+  {
+    float3 brdf = microfacet_brdf(light_dir, view_dir, n, metallic, roughness, base_color, reflectance);
+    radiance += brdf * irradiance * light_color;
+  }
+
+  //- brt: grid SDF
+#if 0
+  {
+    //float x = v2p.tenor;
+    float x = v2p.stddev;
+    float dx = max(fwidth(x), 1e-6f);
+    float f = fract(x);
+    float d = min(f, 1.0f - f);
+    float dpx = d / dx;
+    float half_width_px = 0.5f;
+    float coverage = 1.0f - smoothstep(0.0f, 0.5f, dpx-half_width_px);
+    float L = 1.0f - (abs(x) >= 0.2f ? 0.3f : 0.0f);
+    float3 line_color = float3(L);
+    radiance = mix(radiance, line_color, coverage);
+  }
+#endif
+
+  //- brt: tenor grid SDF
+#if 1
+  {
+    float x = v2p.tenor;
+    //float x = v2p.stddev;
+    float dx = max(fwidth(x), 1e-6f);
+    float f = fract(x);
+    float d = min(f, 1.0f - f);
+    float dpx = d / dx;
+    float half_width_px = 0.5f;
+    float coverage = 1.0f - smoothstep(0.0f, 0.5f, dpx-half_width_px);
+    float L = 1.0f - (abs(x) >= 0.2f ? 0.3f : 0.0f);
+    float3 line_color = float3(L);
+    radiance = mix(radiance, line_color, coverage);
+  }
+#endif
+
+#if 0
+  float3 radiance_ldr = ldr_from_hdr__reinhard(radiance);
+#else
+  float3 radiance_ldr = ldr_from_hdr__ACES(radiance);
+#endif
+  return float4(radiance_ldr, 1.0);
+}
+
+struct Finalize_Vertex2Pixel
+{
+  float4 position [[position]];
+  float2 texcoord;
+};
+
+vertex Finalize_Vertex2Pixel
+vs_finalize( const ushort vert_id [[ vertex_id ]] )
+{
+  float4 vertex_positions__modl[] =
+  {
+    float4(0, 0, 0, 1),
+    float4(0, 1, 0, 1),
+    float4(1, 0, 0, 1),
+    float4(1, 1, 0, 1),
+  };
+  float4 vertex_position__modl = vertex_positions__modl[vert_id];
+  float4 vertex_position__clip = float4(2*vertex_position__modl.x - 1, 2*vertex_position__modl.y - 1, 0, 1);
+  float2 texcoord              = float2(vertex_position__modl.x, vertex_position__modl.y);
+  texcoord.y = 1-texcoord.y;
+  Finalize_Vertex2Pixel v2p;
+  {
+    v2p.position = vertex_position__clip;
+    v2p.texcoord = texcoord;
+  }
+  return v2p;
+}
+
+fragment float4
+fs_finalize( Finalize_Vertex2Pixel v2p [[ stage_in ]],
+             texture2d<float> stage_t2d [[ texture(0) ]])
+{
+  constexpr sampler stage_sampler(mag_filter::nearest, min_filter::nearest);
+  float4 final_color = stage_t2d.sample(stage_sampler, v2p.texcoord);
+  final_color.a = 1.0;
+  return final_color;
+}
+
+"""

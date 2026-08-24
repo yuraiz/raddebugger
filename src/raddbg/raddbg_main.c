@@ -377,6 +377,7 @@
 //- rjf: [h]
 #include "base/base_inc.h"
 #include "x64/x64.h"
+#include "arm64/arm64.h"
 #include "win32/win32_inc.h"
 #include "linker/hash_table.h"
 #include "linker/base_ext/base_bit_array.h"
@@ -400,6 +401,7 @@
 #include "coff/coff_parse.h"
 #include "pe/pe.h"
 #include "elf/elf.h"
+#include "mach-o/mach-o.h"
 #include "gnu/gnu.h"
 #include "gnu/gnu_parse.h"
 #include "elf/elf_parse.h"
@@ -440,6 +442,7 @@
 //- rjf: [c]
 #include "base/base_inc.c"
 #include "x64/x64.c"
+#include "arm64/arm64.c"
 #include "win32/win32_inc.c"
 #include "linker/hash_table.c"
 #include "linker/base_ext/base_bit_array.c"
@@ -463,6 +466,7 @@
 #include "coff/coff_parse.c"
 #include "pe/pe.c"
 #include "elf/elf.c"
+#include "mach-o/mach-o.c"
 #include "gnu/gnu.c"
 #include "gnu/gnu_parse.c"
 #include "elf/elf_parse.c"

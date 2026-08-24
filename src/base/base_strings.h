@@ -81,7 +81,7 @@ typedef enum PathStyle
   
 #if OS_WINDOWS
   PathStyle_SystemAbsolute = PathStyle_WindowsAbsolute
-#elif OS_LINUX
+#elif OS_LINUX || OS_MAC
   PathStyle_SystemAbsolute = PathStyle_UnixAbsolute
 #else
 # error Absolute path style is undefined for this OS.
@@ -185,6 +185,7 @@ internal String16 str16_cstring(U16 *c);
 internal String32 str32_cstring(U32 *c);
 internal String8  str8_cstring_capped(void *cstr, void *cap);
 internal String16 str16_cstring_capped(void *cstr, void *cap);
+internal String8  str8_cstring_capped_reverse(void *raw_start, void *raw_cap);
 
 ////////////////////////////////
 //~ rjf: String Stylization

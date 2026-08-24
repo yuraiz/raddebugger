@@ -110,7 +110,7 @@
 ////////////////////////////////
 //~ rjf: Arch Cracking
 
-#if defined(ARCH_X64)
+#if defined(ARCH_X64) || defined(ARCH_ARM64)
 # define ARCH_64BIT 1
 #elif defined(ARCH_X86)
 # define ARCH_32BIT 1
@@ -163,7 +163,7 @@
 #endif
 
 #if !defined(BUILD_VERSION_PATCH)
-# define BUILD_VERSION_PATCH 29
+# define BUILD_VERSION_PATCH 28
 #endif
 
 #define BUILD_VERSION_STRING_LITERAL Stringify(BUILD_VERSION_MAJOR) "." Stringify(BUILD_VERSION_MINOR) "." Stringify(BUILD_VERSION_PATCH)
@@ -244,7 +244,7 @@
 #if ARCH_X86
 # error You tried to build in x86 (32 bit) mode, but currently, only building in x64 (64 bit) mode is supported.
 #endif
-#if !ARCH_X64
+#if !ARCH_X64 && !ARCH_ARM64
 # error You tried to build with an unsupported architecture. Currently, only building in x64 mode is supported.
 #endif
 
