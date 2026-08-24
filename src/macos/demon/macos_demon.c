@@ -292,6 +292,9 @@ mac_dmn_thread_read_reg_block(MAC_DMN_Thread *thread)
       reg_block->sp = thread_state.__sp;
       reg_block->pc = thread_state.__pc;
 
+      printf("read regs: %llu %llu %llu\n", thread_state.__x[0],  thread_state.__x[1],  thread_state.__x[2]);
+      printf("same regs: %llu %llu %llu\n", reg_block->x0,  reg_block->x1,  reg_block->x2);
+
       MemoryCopy(&reg_block->v0, neon_state.__v, sizeof(neon_state.__v));
 
       MemoryCopy(&thread->debug_regs, &debug_state, sizeof(debug_state));
@@ -895,6 +898,8 @@ mac_dmn_process_from_pid(pid_t pid)
 internal void
 mac_dmn_push_event_create_process(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process)
 {
+  printf("%s\n", __func__);
+
   Temp scratch = scratch_begin(&arena, 1);
   // push create process event
   DMN_Event *e = dmn_event_list_push(arena, events);
@@ -910,6 +915,8 @@ mac_dmn_push_event_create_process(Arena *arena, DMN_EventList *events, MAC_DMN_P
 internal void
 mac_dmn_push_event_exit_process(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_ExitProcess;
   e->process = mac_dmn_handle_from_process(process);
@@ -919,6 +926,8 @@ mac_dmn_push_event_exit_process(Arena *arena, DMN_EventList *events, MAC_DMN_Pro
 internal void
 mac_dmn_push_event_create_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind                = DMN_EventKind_CreateThread;
   e->process             = mac_dmn_handle_from_process(thread->process);
@@ -945,6 +954,8 @@ mac_dmn_push_event_create_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Th
 internal void
 mac_dmn_push_event_exit_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread, U64 exit_code)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_ExitThread;
   e->process = mac_dmn_handle_from_process(thread->process);
@@ -955,6 +966,8 @@ mac_dmn_push_event_exit_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Thre
 internal void
 mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, MAC_DMN_Module *module)
 {
+  printf("%s\n", __func__);
+
   Temp scratch = scratch_begin(&arena, 1);
 
   char* path_buffer = push_array(scratch.arena, char, PATH_MAX);
@@ -976,6 +989,8 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
 internal void
 mac_dmn_push_event_unload_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, MAC_DMN_Module *module)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_UnloadModule;
   e->process = mac_dmn_handle_from_process(process);
@@ -985,6 +1000,8 @@ mac_dmn_push_event_unload_module(Arena *arena, DMN_EventList *events, MAC_DMN_Pr
 internal void
 mac_dmn_push_event_handshake_complete(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_HandshakeComplete;
   e->process = mac_dmn_handle_from_process(process);
@@ -995,6 +1012,8 @@ mac_dmn_push_event_handshake_complete(Arena *arena, DMN_EventList *events, MAC_D
 internal void
 mac_dmn_push_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread, U64 address)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind                = DMN_EventKind_Breakpoint;
   e->process             = mac_dmn_handle_from_process(thread->process);
@@ -1005,6 +1024,8 @@ mac_dmn_push_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_Threa
 internal void
 mac_dmn_push_event_single_step(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind                = DMN_EventKind_SingleStep;
   e->process             = mac_dmn_handle_from_process(thread->process);
@@ -1015,6 +1036,8 @@ mac_dmn_push_event_single_step(Arena *arena, DMN_EventList *events, MAC_DMN_Thre
 internal void
 mac_dmn_push_event_exception(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread, U64 signo)
 {
+  printf("%s\n", __func__);
+
   local_persist B8 is_repeatable[] =
   {
     0, // null
@@ -1069,6 +1092,8 @@ mac_dmn_push_event_exception(Arena *arena, DMN_EventList *events, MAC_DMN_Thread
 internal void
 mac_dmn_push_event_halt(Arena *arena, DMN_EventList *events)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind = DMN_EventKind_Halt;
 }
@@ -1076,6 +1101,8 @@ mac_dmn_push_event_halt(Arena *arena, DMN_EventList *events)
 internal void
 mac_dmn_push_event_not_attached(Arena *arena, DMN_EventList *events)
 {
+  printf("%s\n", __func__);
+
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind       = DMN_EventKind_Error;
   e->error_kind = DMN_ErrorKind_NotAttached;
@@ -1149,7 +1176,7 @@ mac_dmn_event_exit_process(Arena *arena, DMN_EventList *events, pid_t pid)
   
   // push process exit event
   mac_dmn_push_event_exit_process(arena, events, process);
-  
+
   // release process
   mac_dmn_process_release(process);
 }
@@ -1197,7 +1224,8 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
     // read the arguments of dyld_image_notifier.
     // TODO(yuraiz): verify that we get the correct values here
     enum dyld_image_mode mode = reg_block->x0 >> 32;
-    U32 info_count = reg_block->x1 >> 32;
+    // U32 info_count = reg_block->x1 >> 32;
+    U32 info_count = reg_block->x1;
     U64 info_addr = reg_block->x2;
 
     mach_vm_size_t read_count = 0;
@@ -1215,6 +1243,8 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
 
         // NOTE(yuraiz): For some reason dyld notifies about the main module multiple times.
         // Maybe we can compare only with the main module
+
+        printf("add images %d %p\n", info_count, info_addr);
 
         // generate load module events
         for EachIndex(i, info_count)
