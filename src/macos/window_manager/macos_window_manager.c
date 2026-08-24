@@ -127,11 +127,15 @@
 {
   MAC_WM_Window *window = mac_wm_window_from_nswindow(notification.object);
 
-  mac_wm_set_window_buttons_positions(window);
+  // mac_wm_set_window_buttons_positions(window);
 
-  // NOTE(yuraiz): AppKit takes control of the event loop during
-  // window resizing, so it's impossible to otherwize redraw during resizing.
-  rd_frame();
+  // NOTE(yuraiz): Calling rd_frame during initial window resize results in segmentation fault
+  if (!([window->nswindow styleMask] & NSWindowStyleMaskFullScreen))
+  {
+    // NOTE(yuraiz): AppKit takes control of the event loop during
+    // window resizing, so it's impossible to otherwize redraw during resizing.
+    rd_frame();
+  }
 
   window->nswindow.viewsNeedDisplay = YES;
 }
@@ -246,27 +250,51 @@ mac_wm_rng2f32_from_nsrect( NSRect rect )
 }
 
 internal void
-mac_wm_move_window_button( NSWindow *window, NSWindowButton kind, F32 title_height )
-{
-  NSButton *button = [window standardWindowButton:kind];
-  NSRect frame = button.frame;
-  NSPoint new_origin = frame.origin;
-  F32 size = frame.size.width;
-  F32 base_offset_x = (size + 6.0) * kind;
-  F32 base_offset_y = size + 5.2;
-  F32 offset = 0.18 * title_height;
-  new_origin.x = base_offset_x + offset;
-  new_origin.y = base_offset_y - offset;
-  [button setFrameOrigin:new_origin];
-}
-
-internal void
 mac_wm_set_window_buttons_positions( MAC_WM_Window *window )
 {
+  //- yuraiz: do not break anything in fullscreen
+  if ([window->nswindow styleMask] & NSWindowStyleMaskFullScreen)
+  {
+    return;
+  }
+
   F32 title_height = window->custom_border_title_thickness;
-  mac_wm_move_window_button(window->nswindow, NSWindowCloseButton, title_height);
-  mac_wm_move_window_button(window->nswindow, NSWindowMiniaturizeButton, title_height);
-  mac_wm_move_window_button(window->nswindow, NSWindowZoomButton, title_height);
+  title_height /= window->nswindow.backingScaleFactor;
+
+  //- yuraiz: compute traffic light position for height
+
+  F64 button_size = 12.0;
+  F64 button_offset = (title_height - button_size) / 2.0;
+  if (button_offset > 19.0)
+  {
+    button_offset = 9.0;
+  }
+
+  //- yuraiz: compute the native titlebar height for button origin computation
+  NSRect window_frame = window->nswindow.frame;
+  NSRect content_layout_rect = window->nswindow.contentLayoutRect;
+  F64 native_titlebar_height = window_frame.size.height - content_layout_rect.size.height;
+
+  //- yuraiz: get window buttons
+  NSButton *close_button = [window->nswindow standardWindowButton:NSWindowCloseButton];
+  NSButton *miniaturize_button = [window->nswindow standardWindowButton:NSWindowMiniaturizeButton];
+  NSButton *zoom_button = [window->nswindow standardWindowButton:NSWindowZoomButton];
+
+  //- compute spacing and the new origin
+	F64 spacing = miniaturize_button.frame.origin.x - close_button.frame.origin.x;
+  NSPoint origin = {
+    .x = button_offset,
+    .y = native_titlebar_height - button_offset - close_button.frame.size.height,
+  };
+
+  // apply new position
+  [close_button setFrameOrigin:origin];
+	origin.x += spacing;
+
+  [miniaturize_button setFrameOrigin:origin];
+	origin.x += spacing;
+
+  [zoom_button setFrameOrigin:origin];
 }
 
 internal WM_Key
@@ -1044,11 +1072,12 @@ wm_get_events(Arena *arena, B32 wait)
           event->pos.x = (F32) pos.x*scale_factor;
           event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
 
+          //- yuraiz: drag window by the titlebar
           window->dragging_window = 0;
           if (event->key == WM_Key_LeftMouseButton && !release)
           {
             Vec2F32 pos_client = event->pos;
-            if (pos_client.y < window->custom_border_title_thickness)
+            if (window != 0 && pos_client.y < window->custom_border_title_thickness)
             {
               B32 is_over_title_bar_client_area = 0;
               for (MAC_WM_TitleBarClientArea *area = window->first_title_bar_client_area;
@@ -1063,7 +1092,7 @@ wm_get_events(Arena *arena, B32 wait)
                   break;
                 }
               }
-              window->dragging_window = !is_over_title_bar_client_area;
+              window->dragging_window = 1;
             }
           }
         } break;
@@ -1122,22 +1151,14 @@ wm_get_events(Arena *arena, B32 wait)
         } break;
 
         case NSEventTypeLeftMouseDragged:
-        case NSEventTypeRightMouseDragged:
         {
-          if (ns_event.type == NSEventTypeLeftMouseDragged && window->dragging_window)
+          if(window != 0 && window->dragging_window)
           {
+            // TODO(yuraiz): Handle events from NSView subclass and start dragging on mouse down event
             [window->nswindow performWindowDragWithEvent:ns_event];
-            break;
-          }
-          WM_Event *event = mac_wm_push_event(WM_EventKind_Press, window);
-          if (ns_event.type == NSEventTypeLeftMouseDragged) 
-          {
-            event->key = WM_Key_LeftMouseButton;
-          } else if (ns_event.type == NSEventTypeRightMouseDragged) 
-          {
-            event->key = WM_Key_RightMouseButton;
           }
         } // fallthrough
+        case NSEventTypeRightMouseDragged:
         case NSEventTypeMouseMoved:
         {
           WM_Event *event = mac_wm_push_event(WM_EventKind_MouseMove, window);
