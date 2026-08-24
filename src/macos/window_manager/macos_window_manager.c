@@ -51,6 +51,7 @@
 @implementation MAC_WM_NSWindow
 - (void)flagsChanged:(NSEvent *)ns_event
 {
+  // TODO(yuraiz): Ask Brett why that method is so long, why not just 10 LOC as it was, and why a method specifically?
   MAC_WM_Window *window = mac_wm_window_from_nswindow(ns_event.window);
   NSEventModifierFlags new_flags = [ns_event modifierFlags];
   NSEventModifierFlags old_flags = self.previous_flags;
@@ -80,6 +81,16 @@
     if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
     if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
     //if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
+  }
+  // NOTE(yuraiz): I'm too lazy to implement separate keybindings for macOS, so just map cmd to ctrl
+  if ((new_flags & NSEventModifierFlagCommand) != (old_flags & NSEventModifierFlagCommand))
+  {
+    WM_Event *event = mac_wm_push_event(!!(new_flags&NSEventModifierFlagCommand) ? WM_EventKind_Press : WM_EventKind_Release, window);
+    event->key = WM_Key_Ctrl;
+    if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
+    if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
+    if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
+    // if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
   }
 #if 0
   if ((new_flags & NSEventModifierFlagCommand) != (old_flags & NSEventModifierFlagCommand))
@@ -1218,6 +1229,9 @@ wm_get_modifiers(void)
     modifiers |= WM_Modifier_Shift;
   if (flags & kCGEventFlagMaskAlternate)
     modifiers |= WM_Modifier_Alt;
+  // NOTE(yuraiz): Map cmd to ctrl for now
+  if (flags & kCGEventFlagMaskCommand)
+    modifiers |= WM_Modifier_Ctrl;
 #if 0
   if (flags & kCGEventFlagMaskCommand)
     modifiers |= WM_Modifier_Super;
