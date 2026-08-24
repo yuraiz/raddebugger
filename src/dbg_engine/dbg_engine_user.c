@@ -496,6 +496,54 @@ d_trap_net_from_thread__step_over_line(Arena *arena, D_Entity *thread)
     {
       flags |= (D_TrapFlag_SaveStackPointerBefore|D_TrapFlag_SingleStepAfterHit);
     }
+
+#if 0 // TODO(yuraiz): @spoof_stepping
+    // rjf: call => place spoof at return spot in stack, single-step after hitting
+    else if(point->inst_flags & DASM_InstFlag_Call)
+    {
+      // NOTE(yuraiz): the default call on arm64 is split into two separate parts:
+      // - branch with link: stores the return address to lr and moves pc to the label address
+      // - store fp, lr register pair: creates a "stack frame", usually placed as the second
+      //   instruction in the standard function prologue, omitted in leaf functions.
+      //
+      // We want to search when lr is saved on the stack and set a trap here.
+      // If lr isn't stored (we're in a leaf function), then we begin spoof mode right after the call.
+
+      //- yuraiz: search for the instruction to set the trap on
+      U64 dest_vaddr = 0;
+      String8 dest_machine_code = str8_zero();
+      while(1)
+      {
+        DASM_CtrlFlowSearchResult search_result = dasm_ctrl_flow_compute_function_body_vaddr_step(*point, arch, dest_vaddr, dest_machine_code);
+        
+        //- yuraiz: found the trap location
+        if(search_result.finish)
+        {
+          point = &search_result.v;
+          break;
+        }
+
+        //- yuraiz: read the requested memory
+        else
+        {
+          Rng1U64 dest_vaddr_range = search_result.request_range;
+          D_ProcessMemorySlice dest_machine_code_slice = d_process_memory_slice_from_vaddr_range(scratch.arena, process->handle, dest_vaddr_range, 0, os_now_microseconds()+50000);
+          
+          dest_vaddr = search_result.request_range.min;
+          dest_machine_code = dest_machine_code_slice.data;
+        }
+      }
+
+      if(point->inst_flags & DASM_InstFlag_PushesArm64StackFrame)
+      {
+        //- yuraiz replace the trap point to the instruction after the stp instruction instead of bl
+        trap_addr = point->vaddr + sizeof(U32);
+        flags |= D_TrapFlag_SaveStackPointer;
+      }
+
+      flags |= (D_TrapFlag_BeginSpoofMode|D_TrapFlag_SingleStepAfterHit);
+    }
+#endif
     
 #if 0 // TODO(rjf): @spoof_stepping
     // rjf: call => place spoof at return spot in stack, single-step after hitting

@@ -6,6 +6,7 @@ UWND_UnwinderTable:
 {
   {PEx64      pe_x64 }
   {EHFrame    eh     }
+  {Compact    compact}
 }
 
 @enum UWND_Unwinder:
