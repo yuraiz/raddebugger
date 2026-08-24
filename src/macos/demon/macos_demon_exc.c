@@ -13,7 +13,7 @@
 //~ Mach Exceptions
 
 internal mach_port_t
-dmn_mac_make_exception_port() 
+mac_dmn_make_exception_port() 
 {
   kern_return_t status_code;
 
@@ -38,7 +38,7 @@ dmn_mac_make_exception_port()
 }
 
 internal void
-dmn_mac_subscribe_to_exceptions(task_t task, mach_port_t exc_port) 
+mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port) 
 {
   kern_return_t status_code = task_set_exception_ports(
     task,
@@ -55,8 +55,8 @@ dmn_mac_subscribe_to_exceptions(task_t task, mach_port_t exc_port)
   }
 }
 
-internal DMN_MAC_ExceptionResult
-dmn_mac_wait_for_exception(mach_port_t exc_port)
+internal MAC_DMN_ExceptionResult
+mac_dmn_wait_for_exception(mach_port_t exc_port)
 {
   const mach_msg_size_t msg_size = 2048;
   kern_return_t status_code = mach_msg_server_once_with_timeout(
@@ -65,7 +65,7 @@ dmn_mac_wait_for_exception(mach_port_t exc_port)
 
   if(status_code == MACH_RCV_TIMED_OUT)
   {
-    DMN_MAC_ExceptionResult result = {0};
+    MAC_DMN_ExceptionResult result = {0};
     result.timed_out = true;
     return result;
   }
@@ -74,7 +74,7 @@ dmn_mac_wait_for_exception(mach_port_t exc_port)
     fprintf(stderr, "mach_msg_server_once returned error: %x %s\n", status_code, mach_error_string(status_code));
   }
 
-  DMN_MAC_ExceptionResult result = dmn_mac_exception_state->last_result;
+  MAC_DMN_ExceptionResult result = mac_dmn_exception_state->last_result;
   return result;
 }
 
@@ -120,7 +120,7 @@ catch_mach_exception_raise(
   mach_msg_type_number_t code_count
 )
 {
-  DMN_MAC_ExceptionResult result = {0};
+  MAC_DMN_ExceptionResult result = {0};
   result.exception_port = exception_port;
   result.thread = thread;
   result.task = task;
@@ -155,7 +155,7 @@ catch_mach_exception_raise(
 
   task_suspend(task);
 
-  dmn_mac_exception_state->last_result = result;
+  mac_dmn_exception_state->last_result = result;
 
   return KERN_SUCCESS;
 }

@@ -31,7 +31,9 @@
 
 #undef internal
 #undef global
+#define nil nil
 #include <mach/mach.h>
+#undef nil
 #define internal static
 #define global static
 
