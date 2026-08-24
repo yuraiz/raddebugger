@@ -111,7 +111,7 @@ dw_is_dwarf_present_from_mach_bin(MACH_Bin info)
 }
 
 internal DW_Raw
-dw_input_from_mach_bin(Arena *arena, MACH_Bin bin, String8 data)
+dw_raw_from_mach_bin(Arena *arena, MACH_Bin bin, String8 data)
 {
   DW_Raw result = {0};
   U8 *command_buf = bin.buf;
