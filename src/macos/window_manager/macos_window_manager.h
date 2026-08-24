@@ -83,6 +83,7 @@ internal MAC_WM_Window *mac_wm_window_from_handle( WM_Window handle );
 internal NSWindow *mac_wm_nswindow_from_window( MAC_WM_Window *window );
 internal MAC_WM_Window *mac_wm_window_from_nswindow( NSWindow *window );
 internal WM_Key mac_wm_os_key_from_vkey( U32 vkey );
+internal void mac_wm_set_window_buttons_positions(MAC_WM_Window *window);
 
 internal WM_Event *mac_wm_push_event( WM_EventKind kind, MAC_WM_Window *window );
 
