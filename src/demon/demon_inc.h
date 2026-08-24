@@ -10,6 +10,8 @@
 # include "win32/demon/win32_demon.h"
 #elif OS_LINUX
 # include "linux/demon/linux_demon.h"
+#elif OS_MAC
+# include "macos/demon/macos_demon.h"
 #else
 # error Demon layer backend not defined for this operating system.
 #endif
