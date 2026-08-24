@@ -11,5 +11,8 @@
 #if defined(EH_FRAME_H)
 # include "eh_frame/unwind/eh_frame_unwind.h"
 #endif
+#if defined(OS_MAC)
+# include "macos/unwind/compact_unwind.c"
+#endif
 
 #endif // UNWIND_INC_H
