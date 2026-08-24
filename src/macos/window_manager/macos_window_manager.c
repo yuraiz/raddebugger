@@ -123,6 +123,19 @@
   mac_wm_state->in_live_resize = 0;
 }
 
+-(void)windowDidResize:(NSNotification *)notification
+{
+  MAC_WM_Window *window = mac_wm_window_from_nswindow(notification.object);
+
+  mac_wm_set_window_buttons_positions(window);
+
+  // NOTE(yuraiz): AppKit takes control of the event loop during
+  // window resizing, so it's impossible to otherwize redraw during resizing.
+  rd_frame();
+
+  window->nswindow.viewsNeedDisplay = YES;
+}
+
 - (void)windowWillClose:(NSNotification *)notification
 {
   NSWindow *ns_window = notification.object;
@@ -419,7 +432,10 @@ wm_init(void)
                                                             action:@selector(terminate:)
                                                      keyEquivalent:@"q"];
     [app_menu addItem:quit_menu_item];
-    [NSApp finishLaunching]; 
+
+    // TODO(yuraiz): Ask Brett why he used finishLaunching here
+    // [NSApp finishLaunching]; 
+    [NSApp activateIgnoringOtherApps:YES];
   }
 }
 
@@ -503,6 +519,8 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
 
     NSString *ns_title = mac_wm_nsstring_from_string(title);
     [ns_window setTitle:ns_title];
+    [ns_window makeKeyAndOrderFront:NULL];
+    [ns_window center];
 
     //- brt: custom border
     if (flags & WM_WindowFlag_CustomBorder)
@@ -513,12 +531,12 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
       //[ns_window center];
       w->custom_border = 1;
       w->paint_arena = arena_alloc();
-#if 1
-      [[ns_window standardWindowButton:NSWindowCloseButton] setHidden:YES];
-      [[ns_window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
-      [[ns_window standardWindowButton:NSWindowZoomButton] setHidden:YES];
-#endif
-      //mac_wm_set_window_buttons_positions(w);
+// #if 1
+//       [[ns_window standardWindowButton:NSWindowCloseButton] setHidden:YES];
+//       [[ns_window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
+//       [[ns_window standardWindowButton:NSWindowZoomButton] setHidden:YES];
+// #endif
+      mac_wm_set_window_buttons_positions(w);
     }
 
     [ns_window registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
@@ -566,7 +584,6 @@ wm_window_focus(WM_Window handle)
   MAC_WM_Window *w = (MAC_WM_Window *)handle.u64[0];
   NSWindow *ns_window = (__bridge NSWindow *)w->nswindow;
   if (!ns_window) { return; }
-  [NSApp activateIgnoringOtherApps:YES];
   [ns_window makeKeyAndOrderFront:0];
 }
 

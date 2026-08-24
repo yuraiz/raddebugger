@@ -429,7 +429,11 @@ r_window_equip(WM_Window handle)
       F32 width_pixels = nswindow.contentView.frame.size.width * nswindow.backingScaleFactor;
       F32 height_pixels = nswindow.contentView.frame.size.height * nswindow.backingScaleFactor;
       window->layer.drawableSize = CGSizeMake(width_pixels, height_pixels);
+      window->layer.contentsScale = nswindow.backingScaleFactor;
       nswindow.contentView.layer = window->layer;
+
+      nswindow.contentView.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
+      nswindow.contentView.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize;
     }
 
     result = r_metal_handle_from_window(window);
