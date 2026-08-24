@@ -13,14 +13,14 @@
 ////////////////////////////////
 //~ Exceptions
 
-typedef struct DMN_MAC_MachMessage {
+typedef struct MAC_DMN_MachMessage {
   union {
     mach_msg_header_t hdr;
     char data[2080];
   };
-} DMN_MAC_MachMessage;
+} MAC_DMN_MachMessage;
 
-typedef struct DMN_MAC_ExceptionResult
+typedef struct MAC_DMN_ExceptionResult
 {
   mach_port_t exception_port;
   mach_port_t thread;
@@ -30,28 +30,28 @@ typedef struct DMN_MAC_ExceptionResult
   S64 subcode;
   S64 subsubcode;
   B32 timed_out;
-} DMN_MAC_ExceptionResult;
+} MAC_DMN_ExceptionResult;
 
 ////////////////////////////////
 //~ Global State
 
-typedef struct DMN_MAC_ExceptionState
+typedef struct MAC_DMN_ExceptionState
 {
   Arena *arena;
-  DMN_MAC_ExceptionResult last_result;
-} DMN_MAC_ExceptionState;
+  MAC_DMN_ExceptionResult last_result;
+} MAC_DMN_ExceptionState;
 
 ////////////////////////////////
 //~ rjf: Globals
 
-global DMN_MAC_ExceptionState *dmn_mac_exception_state = 0;
+global MAC_DMN_ExceptionState *mac_dmn_exception_state = 0;
 
 ////////////////////////////////
 //~ Mach Exceptions
 
-internal mach_port_t dmn_mac_make_exception_port();
-internal void dmn_mac_subscribe_to_exceptions(task_t task, mach_port_t exc_port);
-internal DMN_MAC_ExceptionResult dmn_mac_wait_for_exception(mach_port_t exc_port);
+internal mach_port_t mac_dmn_make_exception_port();
+internal void mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port);
+internal MAC_DMN_ExceptionResult mac_dmn_wait_for_exception(mach_port_t exc_port);
 
 ////////////////////////////////
 //~ Mach exception handlers
