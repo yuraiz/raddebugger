@@ -3109,19 +3109,35 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
     {
       // rjf: prep spoof
       B32 do_spoof = (spoof != 0 && dmn_handle_match(run_ctrls->single_step_thread, dmn_handle_zero()));
+      Arch spoof_arch = Arch_Null;
       U64 size_of_spoof = 0;
       if(do_spoof) ProfScope("prep spoof")
       {
         D_Entity *spoof_process = d_entity_from_handle(spoof->process);
-        Arch arch = spoof_process->arch;
-        size_of_spoof = bit_size_from_arch(arch)/8;
-        d_process_read(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof_old_ip_value);
+        spoof_arch = spoof_process->arch;
+        size_of_spoof = bit_size_from_arch(spoof_arch)/8;
+        if(spoof->vaddr != 0)
+        {
+          d_process_read(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof_old_ip_value);
+        }
       }
       
       // rjf: set spoof
       if(do_spoof) ProfScope("set spoof")
       {
-        d_process_write(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof->new_ip_value);
+        if(spoof_arch == Arch_arm64 && spoof->vaddr == 0)
+        {
+          // NOTE(yuraiz): we do spoof right after the bl instruction, and we're in a leaf function, so we can assume lr is valid
+          ARM64_RegBlock reg_block = {0};
+          d_thread_read_reg_block(spoof->thread, &reg_block);
+          spoof_old_ip_value = reg_block.lr;
+          reg_block.lr = spoof->new_ip_value;
+          d_thread_write_reg_block(spoof->thread, &reg_block);
+        }
+        else
+        {
+          d_process_write(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof->new_ip_value);
+        }
       }
       
       // rjf: run for new events
@@ -3179,7 +3195,14 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       // rjf: unset spoof
       if(do_spoof) ProfScope("unset spoof")
       {
-        d_process_write(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof_old_ip_value);
+        if(spoof_arch == Arch_arm64 && spoof->vaddr == 0)
+        {
+          // do nothing
+        }
+        else
+        {
+          d_process_write(spoof->process, r1u64(spoof->vaddr, spoof->vaddr+size_of_spoof), &spoof_old_ip_value);
+        }
       }
       
       // rjf: irrespective of what event came back, we should ALWAYS check the
@@ -3197,6 +3220,12 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
         if(spoof_thread_rip == spoof->new_ip_value)
         {
           arch_reg_block_write_ip(arch_info, regs_block, spoof_old_ip_value);
+          if(arch == Arch_arm64)
+          {
+            // restore the link register
+            ARM64_RegBlock* regs_arm64 = regs_block;
+            regs_arm64->lr = spoof_old_ip_value;
+          }
           d_thread_write_reg_block(spoof->thread, regs_block);
         }
       }
@@ -5345,12 +5374,35 @@ d_ctrl_thread__run(DMN_CtrlCtx *ctrl_ctx, D_Msg *msg)
         {
           // rjf: setup spoof mode
           begin_spoof_mode = 1;
+          D_Entity *d_process = d_entity_from_handle(target_process);
+          Arch arch = d_process->arch;
           U64 spoof_sp = d_sp_from_thread(target_thread);
           spoof_mode = 1;
           spoof.process = target_process;
           spoof.thread  = target_thread;
           spoof.vaddr   = spoof_sp;
           spoof.new_ip_value = spoof_ip_vaddr;
+          if (arch == Arch_arm64)
+          {
+            // NOTE(yuraiz): spoof for arm64 implementation details:
+            // for regular functions the traps are set past the stp fp, lr instruction.
+            // at that moment the new stack frame is created and fp is updated, the return address is stored at fp + 8.
+            //
+            // otherwise it's assumed to be a leaf function and lr is used directly.
+            //
+            // TODO(yuraiz): might as well be a dyld external call.
+            if(hit_trap_flags & D_TrapFlag_SaveStackPointerAfter)
+            {
+              ARM64_RegBlock reg_block = {0};
+              d_thread_read_reg_block(spoof.thread, &reg_block);
+              spoof.vaddr = reg_block.fp + 8;
+            }
+            else
+            {
+              spoof.vaddr = 0;
+            }
+          }
+          log_infof("spoof:{process:[0x%I64x], thread:[0x%I64x], vaddr:0x%I64x, new_ip_value:0x%I64x}\n", spoof.process, spoof.thread, spoof.vaddr, spoof.new_ip_value);
         }
       }
       
