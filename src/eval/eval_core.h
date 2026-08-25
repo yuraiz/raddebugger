@@ -236,6 +236,16 @@ struct E_TokenArray
 };
 
 ////////////////////////////////
+//~ rjf: Thread-Local Storage Address Evaluation
+
+typedef enum E_TlsKind
+{
+  E_TlsKind_Offset,
+  E_TlsKind_MacOS,
+}
+E_TlsKind;
+
+////////////////////////////////
 //~ rjf: Evaluation Modes
 
 typedef enum E_Mode
