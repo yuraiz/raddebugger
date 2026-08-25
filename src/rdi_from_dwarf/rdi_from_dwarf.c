@@ -3509,8 +3509,11 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
                       case DW_ExprOp_BReg30: case DW_ExprOp_BReg31:
                       {
                         regcode_dw = (U64)(opcode - DW_ExprOp_BReg0);
-                        regval_off = operand_s64s[1];
+                        // NOTE(yuraiz): Changed from operand_s64s[1] to fix sp on arm64.
+                        // I don't know if it was valid for x64 before.
+                        regval_off = operand_s64s[0];
                         regread_is_addr = 1;
+                        
                       }goto reg_read;
                       case DW_ExprOp_BRegX:
                       {
@@ -3533,6 +3536,10 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
                           regcode_rdi = arch_rdi_from_reg_code_table_from_arch(arch)[regcode];
                         }
                         
+                        printf("push RDI_EvalOp_RegRead, %llu %llu %llu,   reg_code: %llu dw: %llu\n", regcode_rdi, reg_size, reg_off, regcode_dw, regcode, regcode_dw);
+                        printf("     reg code name: %s off: %llu\n", arch_info->reg_code_name_table[regcode].str, regval_off);
+
+
                         // rjf: push op
                         rdim_bytecode_push_op(arena, &dst_bytecode, RDI_EvalOp_RegRead, RDI_EncodeRegReadParam(regcode_rdi, reg_size, reg_off));
                         
