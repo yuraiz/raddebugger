@@ -410,6 +410,7 @@ mac_dmn_mach_read_op_mem(U64 address, U64 size, void* dst, U64 src)
 internal U64
 mac_dmn_get_initial_dyld_notifier(MAC_DMN_Process *process)
 {
+  U64 result = 0;
   //////////////////////////////
   // NOTE(yuraiz): When the process just exec-ed, the info we get with task_dyld_info is invalid yet.
   // So to get the notifier and set a breakpoint on it we must:
@@ -1230,8 +1231,7 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
 
     // read the arguments of dyld_image_notifier.
     // TODO(yuraiz): verify that we get the correct values here
-    enum dyld_image_mode mode = reg_block->x0 >> 32;
-    // U32 info_count = reg_block->x1 >> 32;
+    enum dyld_image_mode mode = reg_block->x0;
     U32 info_count = reg_block->x1;
     U64 info_addr = reg_block->x2;
 
@@ -1356,6 +1356,8 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
         mach_vm_read_overwrite(process->task, info.all_image_info_addr, sizeof(all_image_infos),  (mach_vm_address_t)&all_image_infos, &read_count);
 
         process->ctx->dyld_notifier_address = (U64)all_image_infos.notification;
+
+        printf("dyld moved to: %p\n", all_image_infos.notification);
 
         for EachNode(module, MAC_DMN_Module, process->ctx->first_module)
         {
@@ -1551,26 +1553,18 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, ProcessLaunchParams *params)
   // create zero-terminated work directory path
   char *work_dir_path = (char *)str8_copy(scratch.arena, params->path).str;
   
-  // fork process
-  pid_t pid = fork();
-  
-  // child process
-  if(pid == 0)
-  {
-    // Wait for the debugger to attach to the process
-    if(task_suspend(mach_task_self()) != 0) { goto child_exit; }
+  // spawn suspended child process
+  pid_t pid = 0;
 
-    // change work directory to tracee
-    if(MAC_RETRY_ON_EINTR(chdir(work_dir_path)) < 0) { goto child_exit; }
+	posix_spawnattr_t attr;
+	posix_spawnattr_init(&attr);
+	posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED);
 
-    // replace process with target program
-    if(MAC_RETRY_ON_EINTR(execve(argv[0], argv, envp)) < 0) { goto child_exit; }
-    
-    child_exit:;
-    exit(0);
-  }
-  // parent process
-  else if(pid > 0)
+	int spawn_code = posix_spawnp(&pid, argv[0], 0, &attr, argv, envp);
+
+	posix_spawnattr_destroy(&attr);
+
+  if(spawn_code == 0)
   {
     task_t task = 0;
     kern_return_t status_code = task_for_pid(mach_task_self(), pid, &task);
@@ -1586,12 +1580,6 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, ProcessLaunchParams *params)
     process->ctx = mac_dmn_process_ctx_alloc(process, 0);
 
     ptrace(PT_ATTACHEXC, pid, 0, 0);
-
-    status_code = task_resume(task);
-    if(status_code != 0)
-    {
-      fprintf(stderr, "failed to resume the child process: %s\n", mach_error_string(status_code));
-    }
   }
 
   scratch_end(scratch);
@@ -1937,22 +1925,10 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             {
               if(result.exception == EXC_SOFTWARE &&
                  result.code == EXC_SOFT_SIGNAL &&
-                 (result.subcode == SIGSTOP))
+                 result.subcode == SIGSTOP)
               {
-                if(task_resume(result.task) == 0)
-                {
-                  process->state = MAC_DMN_ProcessState_WaitForExec;
-                  goto wait_for_signal;
-                }
-              }
-              else { Assert(0 && "unexpected signal"); }
-            } break;
-            case MAC_DMN_ProcessState_WaitForExec:
-            {
-              if(result.exception == EXC_SOFTWARE &&
-                 result.code == EXC_SOFT_SIGNAL &&
-                 result.subcode == SIGTRAP)
-              {
+                printf("doing the thing:\n");
+
                 MAC_DMN_CreateProcessFlags create_flags = process->debug_subprocesses ? MAC_DMN_CreateProcessFlag_DebugSubprocesses : 0;
                 mac_dmn_process_release(process);
                 process = mac_dmn_event_create_process(arena, &events, pid, 0, create_flags);
