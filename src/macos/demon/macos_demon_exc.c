@@ -38,7 +38,7 @@ mac_dmn_make_exception_port()
 }
 
 internal void
-mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port) 
+mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port)
 {
   kern_return_t status_code = task_set_exception_ports(
     task,
