@@ -3185,6 +3185,12 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       D_Handle module_handle = d_handle_from_dmn(D_MachineID_Local, event->module);
       String8 module_path = path_normalized_from_string(scratch2.arena, event->string);
       U64 exe_timestamp = properties_from_file_path(module_path).modified;
+      // TODO(yuraiz): thread_module_open here
+      
+
+
+
+      
       DMN_ModuleInfo *module_info = event->module_info;
       U64 base_vaddr = event->address;
       
@@ -3255,6 +3261,7 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
           str8_list_pushf(scratch2.arena, &candidates, "%S.pdb", exe_path);
           str8_list_pushf(scratch2.arena, &candidates, "%S.rdi", exe_path_no_ext);
           str8_list_pushf(scratch2.arena, &candidates, "%S.rdi", exe_path);
+          str8_list_pushf(scratch.arena, &candidates, "%S.dSYM/Contents/Resources/DWARF/%S", exe_path, exe_name);
         }
         
         // rjf: push local symbol server cache's path
