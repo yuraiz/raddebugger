@@ -13348,6 +13348,8 @@ rd_frame(void)
       ctx->frame_base                  = push_array(scratch.arena, U64, 1);
       ctx->tls_base                    = push_array(scratch.arena, U64, 1);
       ctx->tls_base[0]                 = d_cached_tls_vaddr_from_thread_module(thread->handle, module->handle, rd_state->frame_eval_memread_endt_us, 0);
+      // TODO(yuraiz): Pass that in a somehow more meaningful way. Maybe decide that even during rdi conversion.
+      ctx->tls_kind                    = OS_MAC ? E_TlsKind_MacOS : E_TlsKind_Offset;
       ctx->cfa                         = d_query_cached_cfa_from_thread_unwind(thread, unwind_count);
     }
     e_select_interpret_ctx(interpret_ctx, eval_dbg_infos_primary->rdi, rip_voff);
