@@ -230,7 +230,7 @@ internal U64
 mac_dmn_thread_read_ip(MAC_DMN_Thread *thread)
 {
   ARCH_Info *arch_info = arch_info_from_arch(thread->process->ctx->arch);
-  U64 result = arch_sp_from_reg_block(arch_info, thread->reg_block);
+  U64 result = arch_ip_from_reg_block(arch_info, thread->reg_block);
   return result;
 }
 
@@ -291,9 +291,6 @@ mac_dmn_thread_read_reg_block(MAC_DMN_Thread *thread)
       reg_block->lr = thread_state.__lr;
       reg_block->sp = thread_state.__sp;
       reg_block->pc = thread_state.__pc;
-
-      printf("read regs: %llu %llu %llu\n", thread_state.__x[0],  thread_state.__x[1],  thread_state.__x[2]);
-      printf("same regs: %llu %llu %llu\n", reg_block->x0,  reg_block->x1,  reg_block->x2);
 
       MemoryCopy(&reg_block->v0, neon_state.__v, sizeof(neon_state.__v));
 
@@ -898,8 +895,6 @@ mac_dmn_process_from_pid(pid_t pid)
 internal void
 mac_dmn_push_event_create_process(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process)
 {
-  printf("%s\n", __func__);
-
   Temp scratch = scratch_begin(&arena, 1);
   // push create process event
   DMN_Event *e = dmn_event_list_push(arena, events);
@@ -915,8 +910,6 @@ mac_dmn_push_event_create_process(Arena *arena, DMN_EventList *events, MAC_DMN_P
 internal void
 mac_dmn_push_event_exit_process(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_ExitProcess;
   e->process = mac_dmn_handle_from_process(process);
@@ -926,8 +919,6 @@ mac_dmn_push_event_exit_process(Arena *arena, DMN_EventList *events, MAC_DMN_Pro
 internal void
 mac_dmn_push_event_create_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind                = DMN_EventKind_CreateThread;
   e->process             = mac_dmn_handle_from_process(thread->process);
@@ -954,8 +945,6 @@ mac_dmn_push_event_create_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Th
 internal void
 mac_dmn_push_event_exit_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread, U64 exit_code)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_ExitThread;
   e->process = mac_dmn_handle_from_process(thread->process);
@@ -966,8 +955,6 @@ mac_dmn_push_event_exit_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Thre
 internal void
 mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, MAC_DMN_Module *module)
 {
-  printf("%s\n", __func__);
-
   Temp scratch = scratch_begin(&arena, 1);
 
   char* path_buffer = push_array(scratch.arena, char, PATH_MAX);
@@ -983,14 +970,44 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
   e->string          = push_str8_copy(arena, path);
   e->size            = module->size;
 
+  // TODO(yuraiz): Fill the module info
+  
+  DMN_ModuleInfo *module_info = push_array(arena, DMN_ModuleInfo, 1);
+
+  module_info->arch = process->ctx->arch;
+  module_info->vsize = module->size;
+
+  // rjf: entry point
+  // module_info->entry_point_voff;
+  
+  module_info->module_path = push_str8_copy(arena, path);
+  
+  // // rjf: debug info key
+  // String8 debug_info_path;
+  // Guid debug_info_guid;
+  // U64 debug_info_timestamp;
+  // U64 debug_info_age;
+  
+  // // rjf: thread-local storage info
+  // U64 tls_index;
+  // U64 tls_offset;
+  
+  // // rjf: unwinding info
+  // Rng1U64 pe_intel_pdatas_vaddr_range;
+  // Rng1U64 eh_frame_header_vaddr_range;
+  
+  // // rjf: special raddbg data
+  // Rng1U64 raddbg_info_voff_range;
+  // U64 raddbg_is_attached_marker_voff;
+
+  e->module_info     = module_info;
+
   scratch_end(scratch);
 }
 
 internal void
 mac_dmn_push_event_unload_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, MAC_DMN_Module *module)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_UnloadModule;
   e->process = mac_dmn_handle_from_process(process);
@@ -1000,8 +1017,6 @@ mac_dmn_push_event_unload_module(Arena *arena, DMN_EventList *events, MAC_DMN_Pr
 internal void
 mac_dmn_push_event_handshake_complete(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind    = DMN_EventKind_HandshakeComplete;
   e->process = mac_dmn_handle_from_process(process);
@@ -1012,20 +1027,18 @@ mac_dmn_push_event_handshake_complete(Arena *arena, DMN_EventList *events, MAC_D
 internal void
 mac_dmn_push_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread, U64 address)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind                = DMN_EventKind_Breakpoint;
   e->process             = mac_dmn_handle_from_process(thread->process);
   e->thread              = mac_dmn_handle_from_thread(thread);
   e->instruction_pointer = address;
+  // TODO(yuraiz): Figure out when to set that
+  // e->address             = address;
 }
 
 internal void
 mac_dmn_push_event_single_step(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind                = DMN_EventKind_SingleStep;
   e->process             = mac_dmn_handle_from_process(thread->process);
@@ -1036,8 +1049,6 @@ mac_dmn_push_event_single_step(Arena *arena, DMN_EventList *events, MAC_DMN_Thre
 internal void
 mac_dmn_push_event_exception(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread, U64 signo)
 {
-  printf("%s\n", __func__);
-
   local_persist B8 is_repeatable[] =
   {
     0, // null
@@ -1092,8 +1103,6 @@ mac_dmn_push_event_exception(Arena *arena, DMN_EventList *events, MAC_DMN_Thread
 internal void
 mac_dmn_push_event_halt(Arena *arena, DMN_EventList *events)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind = DMN_EventKind_Halt;
 }
@@ -1101,8 +1110,6 @@ mac_dmn_push_event_halt(Arena *arena, DMN_EventList *events)
 internal void
 mac_dmn_push_event_not_attached(Arena *arena, DMN_EventList *events)
 {
-  printf("%s\n", __func__);
-
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind       = DMN_EventKind_Error;
   e->error_kind = DMN_ErrorKind_NotAttached;

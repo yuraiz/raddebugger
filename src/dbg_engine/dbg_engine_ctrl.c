@@ -2728,10 +2728,12 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, U64 base_vaddr, DM
     {
       String8 exe_path = module_info->module_path;
       String8 exe_path_no_ext = str8_chop_last_dot(exe_path);
+      String8 exe_name        = str8_skip_last_slash(exe_path);
       str8_list_pushf(scratch.arena, &candidates, "%S.pdb", exe_path_no_ext);
       str8_list_pushf(scratch.arena, &candidates, "%S.pdb", exe_path);
       str8_list_pushf(scratch.arena, &candidates, "%S.rdi", exe_path_no_ext);
       str8_list_pushf(scratch.arena, &candidates, "%S.rdi", exe_path);
+      str8_list_pushf(scratch.arena, &candidates, "%S.dSYM/Contents/Resources/DWARF/%S", exe_path, exe_name);
     }
     
     // rjf: push local symbol server cache's path
