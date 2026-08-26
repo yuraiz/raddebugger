@@ -412,92 +412,6 @@ mac_dmn_mach_read_op_mem(U64 address, U64 size, void* dst, U64 src)
   return read_size == size;
 }
 
-internal U64
-mac_dmn_get_initial_dyld_notifier(MAC_DMN_Process *process)
-{
-  U64 result = 0;
-  //////////////////////////////
-  // NOTE(yuraiz): When the process just exec-ed, the info we get with task_dyld_info is invalid yet.
-  // So to get the notifier and set a breakpoint on it we must:
-  // - Find the dyld image in the process memory.
-  // - Find _lldb_image_notifier symbol in the image.
-  // 
-  // After some time the notifier is called with an argument dyld_image_dyld_moved,
-  // and it should be replaced with the one from task_dyld_info.
-
-  Temp scratch = scratch_begin(0, 0);
-
-  mach_port_t object_name = MACH_PORT_NULL;
-  mach_msg_type_number_t region_info_size = VM_REGION_BASIC_INFO_COUNT_64;
-
-  vm_region_basic_info_data_64_t region_info = {0};
-
-  mach_vm_address_t address = 0;
-  mach_vm_size_t size = 0;
-
-  //- yuraiz: check memory regions in order
-  while(1)
-  {
-    mach_vm_region(process->task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&region_info, &region_info_size, &object_name);
-
-    mach_vm_size_t read_count = 0;
-
-    struct mach_header_64 maybe_mach_header = {0};
-
-    mach_vm_read_overwrite(process->task, address, sizeof(struct mach_header_64),  (mach_vm_address_t)&maybe_mach_header, &read_count);
-
-    //- yuraiz: check if that the dyld image header
-    if(maybe_mach_header.magic == MH_MAGIC_64 && maybe_mach_header.filetype == MH_DYLINKER)
-    {
-      MACH_Bin info = mach_extract_file_info(scratch.arena, address, mac_dmn_mach_read_op_mem, process->task);
-
-      //- yuraiz: iterate over the image commands
-      U8 *command_buf = info.buf;
-      for EachIndex(i, info.command_count)
-      {
-        struct load_command *ld_cmd = (struct load_command *)command_buf;
-        //- yuraiz: we're interested in the symbols
-        if(ld_cmd->cmd == LC_SYMTAB)
-        {
-          struct symtab_command *command = (struct symtab_command*)ld_cmd;
-
-          mach_vm_address_t sym_addr = address + command->symoff;
-          mach_vm_size_t sym_size = sizeof(struct nlist_64) * command->nsyms;
-          struct nlist_64 *syms = push_array(scratch.arena, struct nlist_64, command->nsyms);
-          mach_vm_read_overwrite(process->task, sym_addr, sym_size, (mach_vm_address_t)syms, &read_count);
-          
-          mach_vm_address_t str_addr = address + command->stroff;
-          mach_vm_size_t str_size = command->strsize;
-          char *strdata = push_array(scratch.arena, char, command->strsize);
-          mach_vm_read_overwrite(process->task, str_addr, str_size, (mach_vm_address_t)strdata, &read_count);
-
-          //- yuraiz: search the symbols for _lldb_image_notifier
-          for EachIndex(i, command->nsyms)
-          {
-            U32 strx = syms[i].n_un.n_strx;
-            if(strx != 0)
-            {
-              String8 string = str8_cstring(strdata + strx);
-              String8 prefix = str8_lit("_lldb_image_notifier");
-              if(str8_match(string, prefix, 0))
-              {
-                scratch_end(scratch);
-                U64 point = address + syms[i].n_value;
-                return point;
-              }
-            }
-          }
-        }
-        command_buf += ld_cmd->cmdsize;
-      }
-    }
-
-    address += size;
-  }
-
-  Assert(0 && "Failed to find the dyld image");
-}
-
 internal MAC_DMN_Entity *
 mac_dmn_entity_alloc(MAC_DMN_EntityKind kind)
 {
@@ -640,10 +554,6 @@ mac_dmn_thread_set_probes(MAC_DMN_Thread *thread)
   // NOTE(yuraiz): Currently we set only a singe trap.
   Temp scratch = scratch_begin(0, 0);
 
-  if(thread->process->ctx->dyld_notifier_address == 0)
-  {
-    thread->process->ctx->dyld_notifier_address = mac_dmn_get_initial_dyld_notifier(thread->process);
-  }
   U64 breakpoint_location = thread->process->ctx->dyld_notifier_address;
 
   mac_dmn_hardware_breakpoint(thread, 0, breakpoint_location, true, false);
@@ -1245,8 +1155,7 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
     // Debuggers discover that by setting a breakpoint on a special dyld_image_notifier function.
     // 
     // You can find it in the dyld_all_image_infos.notifier field, but it isn't valid just after the start,
-    // so I search for _lldb_image_notifier using mac_dmn_get_initial_dyld_notifier helper function
-    // and update on dyld_image_dyld_moved notification.
+    // so I compute it by the offset to the dyld_all_image_infos which I compute from dyld_all_image_infos too.
 
     // disable the breakpoint for a single step
     thread->clear_single_step = mac_dmn_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, false, true); 
@@ -1975,6 +1884,32 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
                 MAC_DMN_CreateProcessFlags create_flags = process->debug_subprocesses ? MAC_DMN_CreateProcessFlag_DebugSubprocesses : 0;
                 mac_dmn_process_release(process);
                 process = mac_dmn_event_create_process(arena, &events, pid, 0, create_flags);
+
+                // compute the initial dyld notifier address
+                {
+                  struct task_dyld_info info = {0};
+                  mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
+                  task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
+                  Assert(info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_64);
+
+                  mach_vm_size_t read_count = 0;
+                  struct dyld_all_image_infos all_image_infos = {0};
+                  mach_vm_read_overwrite(process->task, info.all_image_info_addr, sizeof(all_image_infos),  (mach_vm_address_t)&all_image_infos, &read_count);
+
+                  // NOTE(yuraiz): At that stage the notification field inside all_image_infos isn't updated,
+                  // and is set by the compiler.
+                  //
+                  // So I compute the offset between the compile time known values, only masking away the high bits.
+
+                  //- yuraiz: compute the dyld notifier offset
+                  U64 mask48 = 0xFFFFFFFFFFFF;
+                  U64 base_dyld_all_image_infos_addr = IntFromPtr(all_image_infos.dyldAllImageInfosAddress) & mask48;
+                  U64 base_dyld_notification_addr = IntFromPtr(all_image_infos.notification) & mask48;
+                  U64 notification_offset = base_dyld_notification_addr - base_dyld_all_image_infos_addr;
+
+                  //- yuraiz: apply the offset to all image info
+                  process->ctx->dyld_notifier_address = IntFromPtr(info.all_image_info_addr) + notification_offset;
+                }
 
                 process->state = MAC_DMN_ProcessState_Normal;
 
