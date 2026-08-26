@@ -2002,6 +2002,7 @@ ev_string_iter_next(Arena *arena, EV_StringIter *it, String8 *out_string)
                 // rjf: if we have a function type, but we did not generate any name, then just put a ???
                 if(out_string->size == 0 && e_type_kind_from_key(ptr_data->type->direct_type_key) == E_TypeKind_Function)
                 {
+                  // TODO(yuraiz): Figure out a way to pass here the symbol name from the module
                   *out_string = str8f(arena, "%S???", pre_prefix);
                   good_symbol_match = 1;
                 }
