@@ -3218,6 +3218,17 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
           unwind_info_opaque = unwind_info;
         }
         
+        //- rjf: apple "compact" unwinder
+        else if(dim_1u64(module_info->compact_unwind_vaddr_range) != 0)
+        {
+          unwinder = UWND_Unwinder_Compact;
+          COMP_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, COMP_UWND_ModuleUnwindInfo, 1);
+          {
+            unwind_info->data = d_data_from_process_vaddr_range(arena, process, module_info->compact_unwind_vaddr_range, 0);
+          }
+          unwind_info_opaque = unwind_info;
+        }
+        
         //- rjf: .eh_frame unwinder
         else if(dim_1u64(module_info->eh_frame_header_vaddr_range) != 0)
         {

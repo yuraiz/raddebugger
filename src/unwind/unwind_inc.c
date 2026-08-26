@@ -8,3 +8,6 @@
 #if defined(EH_FRAME_H)
 # include "eh_frame/unwind/eh_frame_unwind.c"
 #endif
+#if defined(OS_MAC)
+# include "macos/unwind/compact_unwind.c"
+#endif

@@ -569,7 +569,12 @@ mac_dmn_module_alloc(MAC_DMN_Process *process, U64 load_address, U64 name_vaddr)
   module->base_vaddr     = load_address;
   module->name_vaddr     = name_vaddr;
   module->size           = mach_compute_image_size(info);
+  module->guid           = mach_get_uuid(info);
   
+  module->unwind_info_range = mach_find_unwind_info(info);
+  module->unwind_info_range.min += load_address;
+  module->unwind_info_range.max += load_address;
+
   scratch_end(scratch);
   return module;
 }
@@ -985,9 +990,11 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
   
   // // rjf: debug info key
   // String8 debug_info_path;
-  // Guid debug_info_guid;
+  module_info->debug_info_guid = module->guid;
   // U64 debug_info_timestamp;
   // U64 debug_info_age;
+
+  module_info->compact_unwind_vaddr_range = module->unwind_info_range;
   
   // // rjf: thread-local storage info
   // U64 tls_index;
