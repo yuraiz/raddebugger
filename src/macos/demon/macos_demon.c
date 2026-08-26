@@ -1039,9 +1039,9 @@ mac_dmn_push_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_Threa
   e->kind                = DMN_EventKind_Breakpoint;
   e->process             = mac_dmn_handle_from_process(thread->process);
   e->thread              = mac_dmn_handle_from_thread(thread);
-  e->instruction_pointer = address;
+  e->instruction_pointer = mac_dmn_thread_read_ip(thread);
   // TODO(yuraiz): Figure out when to set that
-  // e->address             = address;
+  e->address             = address;
 }
 
 internal void
@@ -1393,7 +1393,24 @@ mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_ActiveTrap
 {
   MAC_DMN_Thread  *thread  = mac_dmn_thread_from_pid(tid);
   U64              ip      = mac_dmn_thread_read_ip(thread);
-  mac_dmn_push_event_breakpoint(arena, events, thread, ip);
+
+  DMN_Handle process = mac_dmn_handle_from_process(thread->process);
+
+  B32 is_user_trap = 0;
+  for EachNode(mac_trap, MAC_DMN_ActiveTrap, user_traps)
+  {
+    DMN_Trap *trap = mac_trap->trap;
+    if(dmn_handle_match(trap->process, process))
+    {
+      if(trap->vaddr == ip)
+      {
+        is_user_trap = 1;
+        break;
+      }
+    }
+  }
+
+  mac_dmn_push_event_breakpoint(arena, events, thread, is_user_trap ? 0 : ip);
 }
 
 internal void
