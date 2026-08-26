@@ -42,6 +42,8 @@ txt_lang_kind_from_arch(Arch arch)
   {
     default:{}break;
     case Arch_x64:{kind = TXT_LangKind_DisasmX64Intel;}break;
+    // TODO(yuraiz): Implement a proper tokenizer.
+    case Arch_arm64:{kind = TXT_LangKind_DisasmX64Intel;}break;
   }
   return kind;
 }
