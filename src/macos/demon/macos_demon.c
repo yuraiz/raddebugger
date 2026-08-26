@@ -1070,6 +1070,7 @@ mac_dmn_push_event_single_step(Arena *arena, DMN_EventList *events, MAC_DMN_Thre
   e->process             = mac_dmn_handle_from_process(thread->process);
   e->thread              = mac_dmn_handle_from_thread(thread);
   e->instruction_pointer = mac_dmn_thread_read_ip(thread);
+  e->address             = e->instruction_pointer;
 }
 
 internal void
