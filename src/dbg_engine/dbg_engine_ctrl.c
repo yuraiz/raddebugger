@@ -2519,7 +2519,6 @@ d_ctrl_thread__append_resolved_module_user_bp_traps(Arena *arena, D_EvalScope *e
   for(D_BreakpointNode *n = user_bps->first; n != 0; n = n->next)
   {
     D_Breakpoint *bp = &n->v;
-    
     //- rjf: file:line-based breakpoints
     if(bp->file_path.size != 0)
     {
@@ -2527,12 +2526,13 @@ d_ctrl_thread__append_resolved_module_user_bp_traps(Arena *arena, D_EvalScope *e
       TxtPt pt = bp->pt;
       String8 filename = bp->file_path;
       String8 filename_normalized = str8_copy(scratch.arena, filename);
-      for(U64 idx = 0; idx < filename_normalized.size; idx += 1)
-      {
-        filename_normalized.str[idx] = lower_from_char(filename_normalized.str[idx]);
-        filename_normalized.str[idx] = correct_slash_from_char(filename_normalized.str[idx]);
-      }
-      
+      // TODO(yuraiz): What that normalization was for?
+      // for(U64 idx = 0; idx < filename_normalized.size; idx += 1)
+      // {
+      //   filename_normalized.str[idx] = lower_from_char(filename_normalized.str[idx]);
+      //   filename_normalized.str[idx] = correct_slash_from_char(filename_normalized.str[idx]);
+      // }
+
       // rjf: gather filename candidates - the path passed down by the frontend *may*
       // exactly match what the debug info stores, but it may be absolute whereas our
       // debug info stores relative paths. so we'll try both.
