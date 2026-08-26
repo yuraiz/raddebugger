@@ -93,6 +93,7 @@ di_init(CmdLine *cmdline)
     di_shared->conversion_completion_shared_memory = shared_memory_alloc(KB(4), di_shared->conversion_completion_shared_memory_name);
     di_shared->conversion_completion_signal_receiver_thread = thread_launch(di_conversion_completion_signal_receiver_thread_entry_point, 0);
   }
+  // TODO(yuraiz): It's nil for some reason.
   di_shared->conversion_completion_shared_memory_base = (U64 *)shared_memory_view_open(di_shared->conversion_completion_shared_memory, r1u64(0, KB(4)));
   di_shared->completion_mutex = mutex_alloc();
   di_shared->completion_arena = arena_alloc();
@@ -1111,10 +1112,14 @@ di_async_tick(void)
 internal void
 di_signal_completion(void)
 {
-  semaphore_take(di_shared->conversion_completion_lock_semaphore, max_U64);
-  di_shared->conversion_completion_shared_memory_base[0] = di_shared->conversion_completion_code;
-  semaphore_drop(di_shared->conversion_completion_lock_semaphore);
-  semaphore_drop(di_shared->conversion_completion_signal_semaphore);
+  // TODO(yuraiz): Fix that
+  if(di_shared->conversion_completion_shared_memory_base != 0)
+  {
+    semaphore_take(di_shared->conversion_completion_lock_semaphore, max_U64);
+    di_shared->conversion_completion_shared_memory_base[0] = di_shared->conversion_completion_code;
+    semaphore_drop(di_shared->conversion_completion_lock_semaphore);
+    semaphore_drop(di_shared->conversion_completion_signal_semaphore);
+  }
 }
 
 internal void
@@ -1127,9 +1132,13 @@ di_conversion_completion_signal_receiver_thread_entry_point(void *p)
     {
       // rjf: get the next retired code
       U64 retired_code = 0;
-      semaphore_take(di_shared->conversion_completion_lock_semaphore, max_U64);
-      retired_code = di_shared->conversion_completion_shared_memory_base[0];
-      semaphore_drop(di_shared->conversion_completion_lock_semaphore);
+      // TODO(yuraiz): Fix that
+      if(di_shared->conversion_completion_shared_memory_base[0] != 0)
+      {
+        semaphore_take(di_shared->conversion_completion_lock_semaphore, max_U64);
+        retired_code = di_shared->conversion_completion_shared_memory_base[0];
+        semaphore_drop(di_shared->conversion_completion_lock_semaphore);
+      }
       
       // rjf: push completion record
       MutexScope(di_shared->completion_mutex)
