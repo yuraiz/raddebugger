@@ -566,14 +566,27 @@ mac_dmn_module_alloc(MAC_DMN_Process *process, U64 load_address, U64 name_vaddr)
   // NOTE(yuraiz): That address expected to have the offset in some places,
   // but in other's it should be just load_address.
   // That offset ctrl_thread__module_open magic detection, but is required for the correct symbol mapping.
+  S64 pref_load_address  = mach_compute_pref_load_address(info);
+  S64 slide              = load_address - pref_load_address;
+
   module->base_vaddr     = load_address;
   module->name_vaddr     = name_vaddr;
   module->size           = mach_compute_image_size(info);
   module->guid           = mach_get_uuid(info);
   
   module->unwind_info_range = mach_find_unwind_info(info);
-  module->unwind_info_range.min += load_address;
-  module->unwind_info_range.max += load_address;
+  if(module->unwind_info_range.min != 0)
+  {
+    module->unwind_info_range.min += slide;
+    module->unwind_info_range.max += slide;
+  }
+
+  module->eh_frame_range = mach_find_eh_frame(info);
+  if(module->eh_frame_range.min != 0)
+  {
+    module->eh_frame_range.min += slide;
+    module->eh_frame_range.max += slide;
+  }
 
   scratch_end(scratch);
   return module;
