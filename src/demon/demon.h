@@ -86,6 +86,7 @@ struct DMN_ModuleInfo
   // rjf: unwinding info
   Rng1U64 pe_intel_pdatas_vaddr_range;
   Rng1U64 eh_frame_header_vaddr_range;
+  Rng1U64 compact_unwind_vaddr_range;
   
   // rjf: special raddbg data
   Rng1U64 raddbg_info_voff_range;

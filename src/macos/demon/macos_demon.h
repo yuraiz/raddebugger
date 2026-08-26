@@ -175,6 +175,9 @@ typedef struct MAC_DMN_Module
   B8  is_live;
   B8  is_main;
 
+  Guid guid;
+  Rng1U64 unwind_info_range;
+  
   struct MAC_DMN_Module *next;
   struct MAC_DMN_Module *prev;
 } MAC_DMN_Module;
