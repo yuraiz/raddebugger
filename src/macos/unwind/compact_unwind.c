@@ -1,6 +1,78 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
+internal void
+compact_uwnd_dump_encoding(compact_unwind_encoding_t encoding)
+{
+    U32 stack_size;
+    switch (encoding & UNWIND_ARM64_MODE_MASK) {
+      case UNWIND_ARM64_MODE_FRAMELESS:
+      {
+        stack_size = ((encoding & UNWIND_ARM64_FRAMELESS_STACK_SIZE_MASK) >> 12);
+        if ( stack_size == 0 )
+            printf("no frame, no saved registers ");
+        else
+            printf("stack size=%d: ", 16 * stack_size);
+        if ( encoding & UNWIND_ARM64_FRAME_X19_X20_PAIR )
+            printf("x19/20 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X21_X22_PAIR )
+            printf("x21/22 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X23_X24_PAIR )
+            printf("x23/24 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X25_X26_PAIR )
+            printf("x25/26 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X27_X28_PAIR )
+            printf("x27/28 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D8_D9_PAIR )
+            printf("d8/9 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D10_D11_PAIR )
+            printf("d10/11 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D12_D13_PAIR )
+            printf("d12/13 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D14_D15_PAIR )
+            printf("d14/15 ");
+      }break;
+      case UNWIND_ARM64_MODE_FRAME:
+      {
+        printf("std frame: ");
+        if ( encoding & UNWIND_ARM64_FRAME_X19_X20_PAIR )
+            printf("x19/20 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X21_X22_PAIR )
+            printf("x21/22 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X23_X24_PAIR )
+            printf("x23/24 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X25_X26_PAIR )
+            printf("x25/26 ");
+        if ( encoding & UNWIND_ARM64_FRAME_X27_X28_PAIR )
+            printf("x27/28 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D8_D9_PAIR )
+            printf("d8/9 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D10_D11_PAIR )
+            printf("d10/11 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D12_D13_PAIR )
+            printf("d12/13 ");
+        if ( encoding & UNWIND_ARM64_FRAME_D14_D15_PAIR )
+            printf("d14/15 ");
+      }break;
+      case UNWIND_ARM64_MODE_DWARF:
+      {
+        printf("dwarf offset 0x%08X, ", encoding & UNWIND_X86_64_DWARF_SECTION_OFFSET);
+      }break;
+      default:
+      {
+        if(encoding == 0 )
+        {
+            printf("no unwind info ");
+        }
+        else
+        {
+            printf("unknown arm64 compact encoding: %p ", encoding);
+        }
+      }break;
+    }
+    printf("\n");
+}
+
 internal struct unwind_info_regular_second_level_entry
 compact_uwnd_lookup(void *unwind_info, U64 offset)
 {
@@ -11,6 +83,11 @@ compact_uwnd_lookup(void *unwind_info, U64 offset)
 
   struct unwind_info_section_header *header =
     (struct unwind_info_section_header *)unwind_info;
+
+  if(header->version != 1)
+  {
+    return result;
+  }
 
   struct unwind_info_section_header_index_entry *entries =
     (struct unwind_info_section_header_index_entry *)(unwind_info + header->indexSectionOffset);
@@ -106,11 +183,21 @@ compact_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info
   compact_unwind_encoding_t encoding = entry.encoding;
 
   U32 encoding_mode = encoding & UNWIND_ARM64_MODE_MASK;
+
   switch(encoding_mode)
   {
+    default:{
+      // NOTE(yuraiz): For some reason sysctlbyname and some
+      // other libc functions have that encoding.
+      // The function offset we get is correct, so I'd suggest disassembling
+      // instructions to figure out which registers to restore.
+      if(encoding == 0x3)
+      {
+        regs->sp = regs->fp + 16;
+        regs->pc = regs->lr;
+      }
+    }break;
     case UNWIND_ARM64_MODE_FRAMELESS:{
-      printf("  UNWIND_ARM64_MODE_FRAMELESS\n");
-
       U32 stack_size = ((encoding & UNWIND_ARM64_FRAMELESS_STACK_SIZE_MASK) >> 12) * 16;
 
       if(regs->pc != regs->lr)

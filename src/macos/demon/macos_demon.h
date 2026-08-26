@@ -177,6 +177,7 @@ typedef struct MAC_DMN_Module
 
   Guid guid;
   Rng1U64 unwind_info_range;
+  Rng1U64 eh_frame_range;
   
   struct MAC_DMN_Module *next;
   struct MAC_DMN_Module *prev;
