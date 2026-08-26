@@ -11,6 +11,11 @@
 ////////////////////////////////
 //~ Helpers
 
+// private flag to disable aslr
+#ifndef _POSIX_SPAWN_DISABLE_ASLR
+# define _POSIX_SPAWN_DISABLE_ASLR 0x0100
+#endif
+
 internal MAC_DMN_ActiveTrap *
 mac_dmn_try_set_trap(Arena *arena, DMN_Trap *trap)
 {
@@ -1595,7 +1600,7 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, ProcessLaunchParams *params)
 
 	posix_spawnattr_t attr;
 	posix_spawnattr_init(&attr);
-	posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED);
+	posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED | _POSIX_SPAWN_DISABLE_ASLR);
 
 	int spawn_code = posix_spawnp(&pid, argv[0], 0, &attr, argv, envp);
 
