@@ -207,8 +207,7 @@ mach_compute_image_size(MACH_Bin info)
       {
         struct segment_command_64 *command = (struct segment_command_64*)ld_cmd;
         String8 segname = str8_cstring(command->segname);
-        if(str8_match_lit("__PAGEZERO", segname, 0) ||
-           str8_match_lit("__TEXT", segname, 0) ||
+        if(str8_match_lit("__TEXT", segname, 0) ||
            str8_match_lit("__DATA", segname, 0))
         {
           result += command->vmsize;
@@ -220,10 +219,10 @@ mach_compute_image_size(MACH_Bin info)
   return result;
 }
 
-internal Rng1U64
-mach_find_unwind_info(MACH_Bin info)
+internal U64
+mach_compute_pref_load_address(MACH_Bin info)
 {
-  Rng1U64 result = {0};
+  U64 result = 0;
   U8 *command_buf = info.buf;
   for EachIndex(i, info.command_count)
   {
@@ -239,6 +238,34 @@ mach_find_unwind_info(MACH_Bin info)
         String8 segname = str8_cstring(command->segname);
         if(str8_match_lit("__TEXT", segname, 0))
         {
+          result = command->vmaddr;
+        }
+      } break;
+    }
+    command_buf += size;
+  }
+  return result;
+}
+
+internal Rng1U64
+mach_compute_segment_range(MACH_Bin info, String8 segment_name, String8 section_name)
+{
+  Rng1U64 result = {0};
+  U8 *command_buf = info.buf;
+  for EachIndex(i, info.command_count)
+  {
+    struct load_command *ld_cmd = (struct load_command *)command_buf;
+    U32 cmd = ld_cmd->cmd;
+    U32 size = ld_cmd->cmdsize;
+    switch(cmd)
+    {
+      default:{break;}
+      case LC_SEGMENT_64:
+      {
+        struct segment_command_64 *command = (struct segment_command_64*)ld_cmd;
+        String8 segname = str8_cstring(command->segname);
+        if(str8_match(segment_name, segname, 0))
+        {
 
           struct section_64 *sections = (struct section_64*)(command_buf + sizeof(struct segment_command_64));
 
@@ -246,11 +273,11 @@ mach_find_unwind_info(MACH_Bin info)
           {
             struct section_64 s = sections[i];
                 
-            String8 section_name = str8_cstring_capped(s.sectname, s.segname);
+            String8 sectname = str8_cstring_capped(s.sectname, s.segname);
                     
-            if(str8_match_lit("__unwind_info", section_name, 0))
+            if(str8_match(section_name, sectname, 0))
             {
-              result = r1u64(s.offset, s.offset + s.size);
+              result = r1u64(s.addr, s.addr + s.size);
             }
           }
         }
@@ -260,6 +287,19 @@ mach_find_unwind_info(MACH_Bin info)
   }
   return result;
 }
+
+internal Rng1U64
+mach_find_unwind_info(MACH_Bin info)
+{
+  return mach_compute_segment_range(info, s("__TEXT"), s("__unwind_info"));
+}
+
+internal Rng1U64
+mach_find_eh_frame(MACH_Bin info)
+{
+  return mach_compute_segment_range(info, s("__TEXT"), s("__eh_frame"));
+}
+
 
 internal U64
 mach_get_entry_point_voffset(MACH_Bin info)
