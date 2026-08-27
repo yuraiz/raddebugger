@@ -942,10 +942,13 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
   // rjf: entry point
   // module_info->entry_point_voff;
   
+  // TODO(yuraiz): Use more advanced lookup
+  String8 debug_info_path =str8f(arena, "%S.dSYM/Contents/Resources/DWARF/%S", path, str8_skip_last_slash(path));
+
   module_info->module_path = push_str8_copy(arena, path);
-  
-  // // rjf: debug info key
-  // String8 debug_info_path;
+
+  // rjf: debug info key
+  module_info->debug_info_path = debug_info_path;
   module_info->debug_info_guid = module->guid;
   // U64 debug_info_timestamp;
   // U64 debug_info_age;
