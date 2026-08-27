@@ -207,6 +207,34 @@ mac_dmn_compute_stack_range(
   return 0;
 }
 
+internal void
+mac_dmn_process_update_dyld_notifier_addr(MAC_DMN_Process *process)
+{
+  // NOTE(yuraiz): At the initial stage the notification field inside all_image_infos isn't updated,
+  // and is set by the compiler.
+  //
+  // So I compute the offset between the compile time known values, only masking away the high bits.
+  // Not neccessary the second time, but still valid.
+
+  struct task_dyld_info info = {0};
+  mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
+  task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
+  Assert(info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_64);
+
+  mach_vm_size_t read_count = 0;
+  struct dyld_all_image_infos all_image_infos = {0};
+  mach_vm_read_overwrite(process->task, info.all_image_info_addr, sizeof(all_image_infos),  (mach_vm_address_t)&all_image_infos, &read_count);
+
+  //- yuraiz: compute the dyld notifier offset
+  U64 mask48 = 0xFFFFFFFFFFFF;
+  U64 base_dyld_all_image_infos_addr = IntFromPtr(all_image_infos.dyldAllImageInfosAddress) & mask48;
+  U64 base_dyld_notification_addr = IntFromPtr(all_image_infos.notification) & mask48;
+  U64 notification_offset = base_dyld_notification_addr - base_dyld_all_image_infos_addr;
+
+  //- yuraiz: apply the offset to all image info
+  process->ctx->dyld_notifier_address = IntFromPtr(info.all_image_info_addr) + notification_offset;
+}
+
 internal B32
 mac_dmn_set_single_step_flag(MAC_DMN_Thread *thread, B32 is_on)
 {
@@ -1171,17 +1199,16 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
     U64 info_addr = reg_block->x2;
 
     mach_vm_size_t read_count = 0;
+    struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
+    mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
+
+    mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
 
     switch(mode)
     {
       case dyld_image_adding:
       {
-        struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
-        mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
-
-        B32 is_first_module = process->ctx->first_module == 0;
-
-        mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
+        B32 is_main_module = process->ctx->first_module == 0 && process->dyld_move_vaddr != 0;
 
         // NOTE(yuraiz): For some reason dyld notifies about the main module multiple times.
         // Maybe we can compare only with the main module
@@ -1208,18 +1235,16 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
         }
 
         // the process, the main thread, and the main module are now created
-        if(is_first_module)
+        if(is_main_module)
         {
           mac_dmn_push_event_handshake_complete(arena, events, process);
+
+          // load dyld module
+          mac_dmn_event_load_module(arena, events, process, process->dyld_move_vaddr, process->dyld_name_vaddr);
         }
       }break;
       case dyld_image_removing:
       {
-        struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
-        mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
-
-        mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
-
         // generate unload module events
         for EachNode(module, MAC_DMN_Module, process->ctx->first_module)
         {
@@ -1234,12 +1259,7 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
         }
       }break;
       case dyld_image_info_change:
-      {        
-        struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
-        mach_vm_size_t array_size = sizeof(struct dyld_image_info) * info_count;
-
-        mach_vm_read_overwrite(process->task, info_addr, array_size, (mach_vm_address_t)image_info_array, &read_count);
-
+      {
         // generate unload module events
         for EachNode(module, MAC_DMN_Module, process->ctx->first_module)
         {
@@ -1281,24 +1301,18 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
       }break;
       case dyld_image_dyld_moved:
       {
-        // TODO(yuraiz): We get here a single &info argument, so we can load /usr/lib/dyld too
         // dyld moved -> we need to read the new notifier address
-        struct task_dyld_info info = {0};
-        mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
-        task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
-        Assert(info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_64);
-
-        struct dyld_all_image_infos all_image_infos = {0};
-        mach_vm_read_overwrite(process->task, info.all_image_info_addr, sizeof(all_image_infos),  (mach_vm_address_t)&all_image_infos, &read_count);
-
-        process->ctx->dyld_notifier_address = (U64)all_image_infos.notification;
-
-        printf("dyld moved to: %p\n", all_image_infos.notification);
+        mac_dmn_process_update_dyld_notifier_addr(process);
 
         for EachNode(module, MAC_DMN_Module, process->ctx->first_module)
         {
           mac_dmn_event_unload_module(arena, events, process, module);
         }
+
+        // NOTE(yuraiz): the debugger expects the first module to be the main one,
+        // so postpond notifying about dyld until the actual main module is loaded.
+        process->dyld_move_vaddr = (U64)image_info_array[0].imageLoadAddress;
+        process->dyld_name_vaddr = (U64)image_info_array[0].imageFilePath;
       }break;
     }
     result = 1;
@@ -1778,49 +1792,52 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
 
       for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
       {
-        //////////////////////////
-        //-yuraiz monitor threads
-        //
-        thread_act_array_t threads = NULL;
-        mach_msg_type_number_t threads_len = 0;
-        task_threads(process->task, &threads, &threads_len);
-
-        // generate exit thread events
-        for EachNode(thread, MAC_DMN_Thread, process->first_thread)
+        if(process->state == MAC_DMN_ProcessState_Normal)
         {
-          B32 exists = 0;
-          for EachIndex(i, threads_len)
-          {
-            if(thread->tid == threads[i])
-            {
-              exists = 1;
-            }
-          }
-          if(!exists)
-          {
-            mac_dmn_event_exit_thread(arena, &events, thread->tid, 0);
-          }
-        }
+          //////////////////////////
+          //-yuraiz monitor threads
+          //
+          thread_act_array_t threads = NULL;
+          mach_msg_type_number_t threads_len = 0;
+          task_threads(process->task, &threads, &threads_len);
 
-        // generate new thread events
-        for EachIndex(i, threads_len)
-        {
-          B32 exists = 0;
+          // generate exit thread events
           for EachNode(thread, MAC_DMN_Thread, process->first_thread)
           {
-            if(thread->tid == threads[i])
+            B32 exists = 0;
+            for EachIndex(i, threads_len)
             {
-              exists = 1;
+              if(thread->tid == threads[i])
+              {
+                exists = 1;
+              }
+            }
+            if(!exists)
+            {
+              mac_dmn_event_exit_thread(arena, &events, thread->tid, 0);
             }
           }
 
-          if(!exists)
+          // generate new thread events
+          for EachIndex(i, threads_len)
           {
-            mac_dmn_event_create_thread(arena, &events, process, threads[i]);
-          }
-        }
+            B32 exists = 0;
+            for EachNode(thread, MAC_DMN_Thread, process->first_thread)
+            {
+              if(thread->tid == threads[i])
+              {
+                exists = 1;
+              }
+            }
 
-        vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
+            if(!exists)
+            {
+              mac_dmn_event_create_thread(arena, &events, process, threads[i]);
+            }
+          }
+
+          vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
+        }
       }
       
       if(result.timed_out)
@@ -1887,30 +1904,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
                 process = mac_dmn_event_create_process(arena, &events, pid, 0, create_flags);
 
                 // compute the initial dyld notifier address
-                {
-                  struct task_dyld_info info = {0};
-                  mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
-                  task_info(process->task, TASK_DYLD_INFO, (task_info_t)&info, &info_cnt);
-                  Assert(info.all_image_info_format == TASK_DYLD_ALL_IMAGE_INFO_64);
-
-                  mach_vm_size_t read_count = 0;
-                  struct dyld_all_image_infos all_image_infos = {0};
-                  mach_vm_read_overwrite(process->task, info.all_image_info_addr, sizeof(all_image_infos),  (mach_vm_address_t)&all_image_infos, &read_count);
-
-                  // NOTE(yuraiz): At that stage the notification field inside all_image_infos isn't updated,
-                  // and is set by the compiler.
-                  //
-                  // So I compute the offset between the compile time known values, only masking away the high bits.
-
-                  //- yuraiz: compute the dyld notifier offset
-                  U64 mask48 = 0xFFFFFFFFFFFF;
-                  U64 base_dyld_all_image_infos_addr = IntFromPtr(all_image_infos.dyldAllImageInfosAddress) & mask48;
-                  U64 base_dyld_notification_addr = IntFromPtr(all_image_infos.notification) & mask48;
-                  U64 notification_offset = base_dyld_notification_addr - base_dyld_all_image_infos_addr;
-
-                  //- yuraiz: apply the offset to all image info
-                  process->ctx->dyld_notifier_address = IntFromPtr(info.all_image_info_addr) + notification_offset;
-                }
+                mac_dmn_process_update_dyld_notifier_addr(process);
 
                 process->state = MAC_DMN_ProcessState_Normal;
 
