@@ -1109,11 +1109,18 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           F32 sigma = params->blur_size;
           MPSImageGaussianBlur *blur = [[MPSImageGaussianBlur alloc] initWithDevice:mtl_device
                                                                               sigma:sigma];
-          Rng2F32 clip = params->clip;
 
-          Vec2F32 dims = dim_2f32(params->rect);
-          blur.clipRect = MTLRegionMake2D(params->rect.min.x, params->rect.min.y, dims.x, dims.y);
-          blur.offset = (MPSOffset){params->rect.min.x, params->rect.min.y, 0};
+          Rng2F32 rect = params->rect;
+          Rng2F32 clip = params->clip;
+          B32 clip_is_set = !(clip.x0 == 0 && clip.y0 == 0 && clip.x1 == 0 && clip.y1 == 0);
+          if(clip_is_set)
+          {
+            rect = intersect_2f32(rect, clip);
+          }
+
+          Vec2F32 dims = dim_2f32(rect);
+          blur.clipRect = MTLRegionMake2D(rect.min.x, rect.min.y, dims.x, dims.y);
+          blur.offset = (MPSOffset){rect.min.x, rect.min.y, 0};
 #if 0
           [blur encodeToCommandBuffer:wnd->command_buffer
                         sourceTexture:wnd->stage_color
