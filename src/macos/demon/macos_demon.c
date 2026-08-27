@@ -1281,6 +1281,7 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
       }break;
       case dyld_image_dyld_moved:
       {
+        // TODO(yuraiz): We get here a single &info argument, so we can load /usr/lib/dyld too
         // dyld moved -> we need to read the new notifier address
         struct task_dyld_info info = {0};
         mach_msg_type_number_t info_cnt = TASK_DYLD_INFO_COUNT;
@@ -1774,6 +1775,53 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         result = mac_dmn_wait_for_exception(mac_dmn_state->exc_port);
         mutex_take(mac_dmn_state->halter_mutex);
       }
+
+      for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
+      {
+        //////////////////////////
+        //-yuraiz monitor threads
+        //
+        thread_act_array_t threads = NULL;
+        mach_msg_type_number_t threads_len = 0;
+        task_threads(process->task, &threads, &threads_len);
+
+        // generate exit thread events
+        for EachNode(thread, MAC_DMN_Thread, process->first_thread)
+        {
+          B32 exists = 0;
+          for EachIndex(i, threads_len)
+          {
+            if(thread->tid == threads[i])
+            {
+              exists = 1;
+            }
+          }
+          if(!exists)
+          {
+            mac_dmn_event_exit_thread(arena, &events, thread->tid, 0);
+          }
+        }
+
+        // generate new thread events
+        for EachIndex(i, threads_len)
+        {
+          B32 exists = 0;
+          for EachNode(thread, MAC_DMN_Thread, process->first_thread)
+          {
+            if(thread->tid == threads[i])
+            {
+              exists = 1;
+            }
+          }
+
+          if(!exists)
+          {
+            mac_dmn_event_create_thread(arena, &events, process, threads[i]);
+          }
+        }
+
+        vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
+      }
       
       if(result.timed_out)
       {
@@ -1790,53 +1838,6 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           }
           is_halt_done = 1;
           break;
-        }
-
-        for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
-        {
-          //////////////////////////
-          //-yuraiz monitor threads
-          //
-          thread_act_array_t threads = NULL;
-          mach_msg_type_number_t threads_len = 0;
-          task_threads(process->task, &threads, &threads_len);
-
-          // generate exit thread events
-          for EachNode(thread, MAC_DMN_Thread, process->first_thread)
-          {
-            B32 exists = 0;
-            for EachIndex(i, threads_len)
-            {
-              if(thread->tid == threads[i])
-              {
-                exists = 1;
-              }
-            }
-            if(!exists)
-            {
-              mac_dmn_event_exit_thread(arena, &events, thread->tid, 0);
-            }
-          }
-
-          // generate new thread events
-          for EachIndex(i, threads_len)
-          {
-            B32 exists = 0;
-            for EachNode(thread, MAC_DMN_Thread, process->first_thread)
-            {
-              if(thread->tid == threads[i])
-              {
-                exists = 1;
-              }
-            }
-
-            if(!exists)
-            {
-              mac_dmn_event_create_thread(arena, &events, process, threads[i]);
-            }
-          }
-
-          vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
         }
 
         continue;
