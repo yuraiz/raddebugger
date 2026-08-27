@@ -2605,17 +2605,20 @@ d_ctrl_thread__append_resolved_module_user_bp_traps(Arena *arena, D_EvalScope *e
       String8 filename = bp->file_path;
       String8 filename_normalized = str8_copy(scratch.arena, filename);
       // TODO(yuraiz): What that normalization was for?
-      // for(U64 idx = 0; idx < filename_normalized.size; idx += 1)
-      // {
-      //   filename_normalized.str[idx] = lower_from_char(filename_normalized.str[idx]);
-      //   filename_normalized.str[idx] = correct_slash_from_char(filename_normalized.str[idx]);
-      // }
+      for(U64 idx = 0; idx < filename_normalized.size; idx += 1)
+      {
+        filename_normalized.str[idx] = lower_from_char(filename_normalized.str[idx]);
+        filename_normalized.str[idx] = correct_slash_from_char(filename_normalized.str[idx]);
+      }
 
       // rjf: gather filename candidates - the path passed down by the frontend *may*
       // exactly match what the debug info stores, but it may be absolute whereas our
       // debug info stores relative paths. so we'll try both.
       String8 filename_candidates[] =
       {
+        filename,
+        path_relative_dst_from_absolute_dst_src(scratch.arena, filename, str8_chop_last_slash(dbgi_path)),
+        path_relative_dst_from_absolute_dst_src(scratch.arena, filename, str8_chop_last_slash(module_path)),
         filename_normalized,
         path_relative_dst_from_absolute_dst_src(scratch.arena, filename_normalized, str8_chop_last_slash(dbgi_path)),
         path_relative_dst_from_absolute_dst_src(scratch.arena, filename_normalized, str8_chop_last_slash(module_path)),
