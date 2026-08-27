@@ -222,6 +222,8 @@ typedef struct MAC_DMN_Process
   B32                        debug_subprocesses;
   B32                        is_cow;
   B32                        vfork_with_spoof;
+  U64                        dyld_move_vaddr;
+  U64                        dyld_name_vaddr;
   U64                        thread_count;
   MAC_DMN_Thread            *first_thread;
   MAC_DMN_Thread            *last_thread;
