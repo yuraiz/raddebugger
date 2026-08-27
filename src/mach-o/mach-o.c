@@ -138,14 +138,18 @@ dw_raw_from_mach_bin(Arena *arena, MACH_Bin bin, String8 data)
                 
             String8 section_name = str8_cstring_capped(s.sectname, s.segname);
                     
-            // String8 section_name = elf_name_from_shdr64(data, bin, shdr);
             DW_SectionKind section_kind = dw_section_kind_from_string(section_name);
 
             String8 section_data = str8_substr(data, r1u64(s.offset, s.offset + s.size));
 
             if(section_kind == DW_SectionKind_Null)
             {
-              fprintf(stderr, "Unknown section kind: %d (%s)\n", section_kind, section_name);
+              //- yuraiz: skip private sections
+              B32 is_private_apple_section = str8_match(s("__apple_"), str8_substr(section_name, r1u64(0, 8)), 0);
+              if(!is_private_apple_section)
+              {
+                fprintf(stderr, "Unknown section kind: %d (%s)\n", section_kind, section_name);
+              }
             }
             
             DW_Section *d = &result.sec[section_kind];
