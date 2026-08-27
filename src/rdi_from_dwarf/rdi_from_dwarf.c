@@ -428,6 +428,9 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
     {
       unit_src_file_maps[unit_idx].v = push_array(scratch.arena, RDIM_SrcFile *, unit_line_table_headers[unit_idx].files.count);
     }
+
+    // TODO(yuraiz): canonicalize_file_name
+    // String8 parent_path
     
     //- rjf: build path -> src file map
     for EachIndex(unit_idx, unit_count)
@@ -437,7 +440,18 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
       {
         DW2_LineTableFile *f = &hdr->files.v[file_idx];
         DW2_LineTableFile *dir = &hdr->dirs.v[f->dir_idx];
-        String8 full_file_path = str8f(scratch2.arena, "%S%s%S", dir->file_name, dir->file_name.size != 0 ? "/" : "", f->file_name);
+        
+        // NOTE(yuraiz): I think ideally I'd want all the pats to be relative to the compilation unit
+        // to make the debug info movable, but it must be handled correctly during the resolution.
+
+        //- yuraiz: convert to absolute path
+        String8 full_file_path = path_absolute_dst_from_relative_dst_src(scratch.arena, f->file_name, dir->file_name);
+        //- yuraiz: resolve the relative path
+        if (str8_match_lit("..", full_file_path, StringMatchFlag_RightSideSloppy)) {
+            DW2_LineTableFile *comp_unit_dir = &hdr->dirs.v[0];
+            full_file_path = path_absolute_dst_from_relative_dst_src(scratch.arena, full_file_path, comp_unit_dir->file_name);
+        }
+
         U64 hash = u64_hash_from_str8(full_file_path);
         U64 slot_idx = hash%slots_count;
         SrcFileNode *node = 0;
@@ -3535,10 +3549,6 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
                           reg_size = dim_1u16(reg_rng);
                           regcode_rdi = arch_rdi_from_reg_code_table_from_arch(arch)[regcode];
                         }
-                        
-                        printf("push RDI_EvalOp_RegRead, %llu %llu %llu,   reg_code: %llu dw: %llu\n", regcode_rdi, reg_size, reg_off, regcode_dw, regcode, regcode_dw);
-                        printf("     reg code name: %s off: %llu\n", arch_info->reg_code_name_table[regcode].str, regval_off);
-
 
                         // rjf: push op
                         rdim_bytecode_push_op(arena, &dst_bytecode, RDI_EvalOp_RegRead, RDI_EncodeRegReadParam(regcode_rdi, reg_size, reg_off));
