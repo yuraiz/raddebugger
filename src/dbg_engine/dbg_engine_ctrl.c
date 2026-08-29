@@ -3222,7 +3222,7 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
         }
         
         //- rjf: apple "compact" unwinder
-        else if(dim_1u64(module_info->compact_unwind_vaddr_range) != 0)
+        else if(OS_MAC)
         {
           unwinder = UWND_Unwinder_Compact;
           COMP_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, COMP_UWND_ModuleUnwindInfo, 1);
