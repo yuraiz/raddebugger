@@ -351,6 +351,13 @@ compact_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info
 
   U64 pc = regs->pc - module_info->base_vaddr;
 
+  //- yuraiz: fp == 0 at the lowest frame of a secondary stack, do not try to read anything
+  if(regs->fp == 0)
+  {
+    result.status = UWND_StepStatus_Good;
+    return result;
+  }
+
   // TODO(yuraiz): Check how "compact" the unwind info actually is, it may be expensive to read it all at once
   COMP_UWND_ModuleUnwindInfo *info = (COMP_UWND_ModuleUnwindInfo *)module_info->unwind_info;
   void *unwind_info = info->data.str;
@@ -359,7 +366,6 @@ compact_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info
 
   compact_unwind_encoding_t encoding = compact_uwnd_lookup(unwind_info, pc);
 
-  printf("step: pc: %p, lr: %p\n", regs->pc, regs->lr);
 
   if(encoding == 0x0)
   {
@@ -415,15 +421,25 @@ compact_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info
       B32 pop_frame = 0;
       B32 found_ret = 0;
       S64 sp_offset = 0;
-      for EachIndex(idx, 256)
+      B32 is_syscall = 0;
+
+      U64 start = regs->pc - sizeof(instr);
+
+      for EachIndex(idx, 32)
       {
         U32 instr = 0;
-        Rng1U64 code_vaddr_range = r1u64(regs->pc + idx, regs->pc + idx + sizeof(instr));
+        Rng1U64 code_vaddr_range = r1u64(start + idx * sizeof(instr), start + idx * sizeof(instr) + sizeof(instr));
         if(memory_map_read(memory_map, code_vaddr_range, &instr) != sizeof(instr))
         {
           is_good = 0;
           result.status = UWND_StepStatus_FailedMemoryRead;
           result.missed_read_vaddr_range = code_vaddr_range;
+          break;
+        }
+
+        if(instr == 0xd4001001)
+        {
+          is_syscall = 1;
           break;
         }
 
@@ -444,7 +460,11 @@ compact_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info
         }
       }
 
-      if(found_ret && !pop_frame)
+      if(is_syscall)
+      {
+        encoding = UNWIND_ARM64_MODE_FRAMELESS;
+      }
+      else if(found_ret && !pop_frame)
       {
         encoding = UNWIND_ARM64_MODE_FRAMELESS;
       }
