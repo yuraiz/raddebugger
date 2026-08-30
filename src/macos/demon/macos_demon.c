@@ -8,8 +8,14 @@
 
 #include "macos/demon/macos_demon_exc.c"
 
-////////////////////////////////
-//~ Helpers
+// NOTE(yuraiz): c++ symbol demangling function.
+//
+// The problem that it uses a function from libc++abi, ideally I wouldn't want to link to it,
+// but it isn't hard to revert that change – it's only 30 loc.
+extern char *__cxa_demangle(const char *mangled_name,
+                            char *output_buffer,
+                            size_t *length,
+                            int *status);
 
 // private flag to disable aslr
 #ifndef _POSIX_SPAWN_DISABLE_ASLR
@@ -510,14 +516,32 @@ mac_dmn_process_lookup_symbol_name(Arena *arena, DMN_Handle process_handle, U64 
 
         char *str_buf = push_array(scratch.arena, char, dim_1u64(str_range));
         mac_dmn_process_read(process, str_range, str_buf);
+        str_buf[dim_1u64(str_range) - 1] = 0;
 
         String8 string = str8_cstring_capped(str_buf, str_buf + dim_1u64(str_range));
-        // strip the initial underscore to match the style of the other tools
-        if(string.size > 0 && string.str[0] == '_')
-        {
-          string = str8_skip(string, 1);
-        }
         result = str8_copy(arena, string);
+
+        {
+          int status = 0;
+          size_t len = 0;
+          char *demangled = __cxa_demangle(str_buf, 0, &len, &status);
+
+          if(status == 0)
+          {
+            result = str8_copy(arena, str8_cstring(demangled));
+          }
+          else
+          {
+            // strip the initial underscore to match the style of the other tools
+            if(string.size > 0 && string.str[0] == '_')
+            {
+              string = str8_skip(string, 1);
+            }
+            result = str8_copy(arena, string);
+          }
+
+          free(demangled);
+        }
       }
   }
   

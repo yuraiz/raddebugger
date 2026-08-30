@@ -32,7 +32,7 @@ link_render="-F/System/Library/PrivateFrameworks -framework QuartzCore -framewor
 clang_common="-ObjC -I../src/ -I../local/ -DBUILD_GIT_HASH=\"$git_hash\" -DBUILD_GIT_HASH_FULL=\"$git_hash_full\" -fdiagnostics-absolute-paths -Wno-pointer-sign -Wno-macro-redefined -Wno-unknown-warning-option -Wall -Wno-missing-braces -Wno-unused-function -Wno-writable-strings -Wno-unused-value -Wno-unused-variable -Wno-unused-local-typedef -Wno-deprecated-register -Wno-deprecated-declarations -Wno-unused-but-set-variable -Wno-single-bit-bitfield-constant-conversion -Wno-compare-distinct-pointer-types -Wno-initializer-overrides -Wno-incompatible-function-pointer-types -Wno-incompatible-pointer-types-discards-qualifiers -Wno-for-loop-analysis -Wno-switch -Wno-format -Xclang -flto-visibility-public-std -D_USE_MATH_DEFINES -Dstrdup=_strdup -Dgnu_printf=printf"
 compile_debug="$compiler -g -O0 -DBUILD_DEBUG=1 ${clang_common} ${auto_compile_flags}"
 compile_release="$compiler -g -O2 -DBUILD_DEBUG=0 ${clang_common} ${auto_compile_flags}"
-compile_link="-lpthread -lm -ldl"
+compile_link="-lpthread -lm -ldl -lc++abi"
 out="-o"
 if [[ $debug ]];   then compile="$compile_debug"; fi
 if [[ $release ]]; then compile="$compile_release"; fi
