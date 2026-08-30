@@ -129,8 +129,9 @@ catch_mach_exception_raise(
 	if(code_count > 1) { result.subcode = code[1]; }
 	if(code_count > 2) { result.subsubcode = code[2]; }
 
-
-	if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
+	if (exception == EXC_BREAKPOINT) {
+		// skip printing
+	} else if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
 		// handling UNIX soft signal
 	
 		printf("Got exception %s (code: EXC_SOFT_SIGNAL subcode: %s)\n",
