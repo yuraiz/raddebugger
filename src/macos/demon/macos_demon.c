@@ -1355,8 +1355,6 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
         // NOTE(yuraiz): For some reason dyld notifies about the main module multiple times.
         // Maybe we can compare only with the main module
 
-        printf("add images %d %p\n", info_count, info_addr);
-
         // generate load module events
         for EachIndex(i, info_count)
         {
@@ -2046,7 +2044,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
                  result.code == EXC_SOFT_SIGNAL &&
                  result.subcode == SIGSTOP)
               {
-                printf("doing the thing:\n");
+                printf("Handled the exception, process launched\n");
 
                 MAC_DMN_CreateProcessFlags create_flags = process->debug_subprocesses ? MAC_DMN_CreateProcessFlag_DebugSubprocesses : 0;
                 mac_dmn_process_release(process);
