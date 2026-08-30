@@ -957,6 +957,8 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             // brt: setup scissor rect
             {
               Rng2F32 clip = group_params->clip;
+              clip.x0 = Max(clip.x0, 0);
+              clip.y0 = Max(clip.y0, 0);
               clip.x1 = Min(wnd->last_resolution.x, clip.x1);
               clip.y1 = Min(wnd->last_resolution.y, clip.y1);
               MTLScissorRect rect = {0};
@@ -1117,6 +1119,9 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           {
             rect = intersect_2f32(rect, clip);
           }
+
+          rect.min.x = Max(rect.min.x, 0);
+          rect.min.y = Max(rect.min.y, 0);
 
           Vec2F32 dims = dim_2f32(rect);
           blur.clipRect = MTLRegionMake2D(rect.min.x, rect.min.y, dims.x, dims.y);
