@@ -589,6 +589,13 @@ rd_title_fstrs_from_ctrl_entity(Arena *arena, D_Entity *entity, B32 include_extr
               name.str = rdi_string_from_idx(rdi, procedure->name_string_idx, &name.size);
               name = push_str8_copy(arena, name);
             }
+#if OS_MAC
+            // TODO(yuraiz): provide abstraction
+            if(name.size == 0 && did_first_known)
+            {
+              name = mac_dmn_process_lookup_symbol_name(arena, d_dmn_from_handle(process->handle), rip_vaddr);
+            }
+#endif
             if(name.size == 0 && did_first_known)
             {
               name = str8_lit("???");

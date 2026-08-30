@@ -1999,6 +1999,21 @@ ev_string_iter_next(Arena *arena, EV_StringIter *it, String8 *out_string)
                   scratch_end(scratch);
                 }
                 
+#if OS_MAC
+                // TODO(yuraiz): provide abstraction
+                if(out_string->size == 0 && e_type_kind_from_key(ptr_data->type->direct_type_key) == E_TypeKind_Function)
+                {;
+                  Temp scratch = scratch_begin(&arena, 1);
+                  D_Entity *process = rd_ctrl_entity_from_eval_space(module->space);
+                  String8 name = mac_dmn_process_lookup_symbol_name(scratch.arena, d_dmn_from_handle(process->handle), vaddr);
+                  if(name.size != 0)
+                  {
+                    *out_string = str8f(arena, "%S%S", pre_prefix, name);
+                  }
+                  good_symbol_match = (out_string->size != 0);
+                  scratch_end(scratch);
+                }
+#endif      
                 // rjf: if we have a function type, but we did not generate any name, then just put a ???
                 if(out_string->size == 0 && e_type_kind_from_key(ptr_data->type->direct_type_key) == E_TypeKind_Function)
                 {

@@ -251,10 +251,11 @@ mach_compute_pref_load_address(MACH_Bin info)
   return result;
 }
 
-internal Rng1U64
-mach_compute_segment_range(MACH_Bin info, String8 segment_name, String8 section_name)
+
+internal struct section_64
+mach_get_section_64(MACH_Bin info, String8 segment_name, String8 section_name)
 {
-  Rng1U64 result = {0};
+  struct section_64 result = {0};
   U8 *command_buf = info.buf;
   for EachIndex(i, info.command_count)
   {
@@ -281,7 +282,7 @@ mach_compute_segment_range(MACH_Bin info, String8 segment_name, String8 section_
                     
             if(str8_match(section_name, sectname, 0))
             {
-              result = r1u64(s.addr, s.addr + s.size);
+              result = s;
             }
           }
         }
@@ -290,6 +291,13 @@ mach_compute_segment_range(MACH_Bin info, String8 segment_name, String8 section_
     command_buf += size;
   }
   return result;
+}
+
+internal Rng1U64
+mach_compute_segment_range(MACH_Bin info, String8 segment_name, String8 section_name)
+{
+  struct section_64 s = mach_get_section_64(info, segment_name, section_name);
+  return r1u64(s.addr, s.addr + s.size);
 }
 
 internal Rng1U64
