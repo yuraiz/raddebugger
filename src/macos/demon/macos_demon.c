@@ -1476,21 +1476,28 @@ mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_ActiveTrap
 
   DMN_Handle process = mac_dmn_handle_from_process(thread->process);
 
-  B32 is_user_trap = 0;
+  DMN_Trap *hit_user_trap = 0;
   for EachNode(mac_trap, MAC_DMN_ActiveTrap, user_traps)
   {
     DMN_Trap *trap = mac_trap->trap;
     if(dmn_handle_match(trap->process, process))
     {
-      if(trap->vaddr == ip)
+      if(trap->flags == 0 && dmn_handle_match(trap->process, process) && trap->vaddr == ip)
       {
-        is_user_trap = 1;
+        hit_user_trap = trap;
         break;
       }
     }
   }
 
-  mac_dmn_push_event_breakpoint(arena, events, thread, is_user_trap ? 0 : ip);
+  // rjf: generate event
+  DMN_Event *e = dmn_event_list_push(arena, events);
+  e->kind                = DMN_EventKind_Breakpoint;
+  // e->kind                = hit_user_trap ? DMN_EventKind_Breakpoint : DMN_EventKind_Trap;
+  e->process             = process;
+  e->thread              = mac_dmn_handle_from_thread(thread);
+  e->instruction_pointer = ip;
+  // e->user_data           = hit_user_trap ? hit_user_trap->id : 0;
 }
 
 internal void
