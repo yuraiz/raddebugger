@@ -174,10 +174,20 @@ typedef struct MAC_DMN_Module
   U64 tls_offset;
   B8  is_live;
   B8  is_main;
+  S64 slide;
 
   Guid guid;
   Rng1U64 unwind_info_range;
   Rng1U64 eh_frame_range;
+  
+  // symbol info
+  Rng1U64 stub_range;
+  U32 stub_size;
+  U32 stub_idx;
+  Rng1U64 syms_range;
+  U64 sym_count;
+  Rng1U64 symstr_range;
+  struct dysymtab_command dysymtab;
   
   struct MAC_DMN_Module *next;
   struct MAC_DMN_Module *prev;

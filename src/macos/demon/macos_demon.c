@@ -440,6 +440,86 @@ mac_dmn_mach_read_op_mem(U64 address, U64 size, void* dst, U64 src)
   return read_size == size;
 }
 
+internal String8
+mac_dmn_process_lookup_symbol_name(Arena *arena, DMN_Handle process_handle, U64 vaddr)
+{
+  // TODO(yuraiz): reads from the process every time, and is called directly in eval code.
+  // Make a normal abstraction with caching.
+
+  Temp scratch = scratch_begin(&arena, 1);
+  String8 result = {};
+
+  MAC_DMN_Process *process = mac_dmn_process_from_handle(process_handle);
+
+  //- yuraiz: find the module 
+  MAC_DMN_Module *target_module = 0;
+  for EachNode(module, MAC_DMN_Module, process->ctx->first_module)
+  {
+    if (vaddr >= module->base_vaddr && module->base_vaddr + module->size > vaddr)
+    {
+      target_module = module;
+    }
+  }
+
+  if(target_module != 0)
+  {
+      //- yuraiz: read the symbol list
+      struct nlist_64 *syms = push_array(scratch.arena, struct nlist_64, target_module->sym_count);
+      mac_dmn_process_read(process, target_module->syms_range, syms);
+      
+      //- yuraiz: check if vaddr is for a stab -> read the symbol index from the symbol table
+      U64 str_off = 0;
+      if(vaddr >= target_module->stub_range.min && vaddr < target_module->stub_range.max)
+      {
+        U64 stub_idx = (vaddr - target_module->stub_range.min) / target_module->stub_size + target_module->stub_idx;
+        if(stub_idx < target_module->dysymtab.nindirectsyms)
+        {
+          U32 stab_sym_idx = 0;
+          U64 sym_idx_vaddr = target_module->dysymtab.indirectsymoff + stub_idx * sizeof(stab_sym_idx) +  target_module->base_vaddr;
+          mac_dmn_process_read(process, rng_1u64(sym_idx_vaddr, sym_idx_vaddr + sizeof(stab_sym_idx)), &stab_sym_idx);
+          str_off = syms[stab_sym_idx].n_un.n_strx;
+        }
+      }
+
+      //- yuraiz: look up by voff in external symbols
+      if(str_off == 0)
+      {
+        U64 target = vaddr - target_module->slide;
+        U64 best_vaddr = 0;
+        for EachIndex(idx, target_module->sym_count)
+        {
+          U32 strx = syms[idx].n_un.n_strx;
+          U64 val = syms[idx].n_value;
+          B32 has_str = strx != 0;
+          B32 is_func = (syms[idx].n_type & N_EXT) != 0;
+
+          if(has_str && is_func && val <= target && best_vaddr < val)
+          {
+            best_vaddr = val;
+            str_off = strx;
+          }
+        }
+      }
+
+      if(str_off != 0)
+      {
+        U64 cap_string_size = 512;
+        Rng1U64 str_range = target_module->symstr_range;
+        str_range.min += str_off;
+        str_range.max = Min(str_range.min + cap_string_size, str_range.max);
+
+        char *str_buf = push_array(scratch.arena, char, dim_1u64(str_range));
+        mac_dmn_process_read(process, str_range, str_buf);
+
+        String8 string = str8_cstring_capped(str_buf, str_buf + dim_1u64(str_range));
+        result = str8_copy(arena, string);
+      }
+  }
+  
+  scratch_end(scratch);
+  return result;
+}
+
 internal MAC_DMN_Entity *
 mac_dmn_entity_alloc(MAC_DMN_EntityKind kind)
 {
@@ -514,10 +594,11 @@ mac_dmn_module_alloc(MAC_DMN_Process *process, U64 load_address, U64 name_vaddr)
   // but in other's it should be just load_address.
   // That offset ctrl_thread__module_open magic detection, but is required for the correct symbol mapping.
   S64 pref_load_address  = mach_compute_pref_load_address(info);
-  S64 slide              = load_address - pref_load_address;
+  S64 slide = load_address - pref_load_address;
 
   module->base_vaddr     = load_address;
   module->name_vaddr     = name_vaddr;
+  module->slide          = slide;
   module->size           = mach_compute_image_size(info);
   module->guid           = mach_get_uuid(info);
   
@@ -528,11 +609,64 @@ mac_dmn_module_alloc(MAC_DMN_Process *process, U64 load_address, U64 name_vaddr)
     module->unwind_info_range.max += slide;
   }
 
-  module->eh_frame_range = mach_find_eh_frame(info);
-  if(module->eh_frame_range.min != 0)
+  struct section_64 stub_section = mach_get_section_64(info,  s("__TEXT"), s("__stubs"));
+  module->stub_size = stub_section.reserved2;
+  module->stub_idx = stub_section.reserved1;
+  module->stub_range = r1u64(stub_section.addr, stub_section.addr + stub_section.size);
+
+  if(module->stub_range.min != 0)
   {
-    module->eh_frame_range.min += slide;
-    module->eh_frame_range.max += slide;
+    module->stub_range.min += slide;
+    module->stub_range.max += slide;
+  }
+
+  S64 linkedit_slide = 0;
+  U8 *command_buf = info.buf;
+  for EachIndex(cmd_idx, info.command_count)
+  {
+    struct load_command *ld_cmd = (struct load_command *)command_buf;
+
+    if (ld_cmd->cmd == LC_SEGMENT_64)
+    {
+      struct segment_command_64 *command = (struct segment_command_64 *)ld_cmd;
+      String8 segname = str8_cstring(command->segname);
+      if(str8_match_lit("__LINKEDIT", segname, 0))
+      {
+        S64 linkedit_file_offset = command->fileoff;
+        S64 linkedit_vaddr = command->vmaddr + slide;
+        linkedit_slide = linkedit_vaddr - linkedit_file_offset;
+      }
+    }
+
+    command_buf += ld_cmd->cmdsize;
+  }
+
+  //- yuraiz: extract symbol info ranges
+  command_buf = info.buf;
+  for EachIndex(cmd_idx, info.command_count)
+  {
+    struct load_command *ld_cmd = (struct load_command *)command_buf;
+    if(ld_cmd->cmd == LC_SYMTAB)
+    {
+      struct symtab_command *command = (struct symtab_command *)ld_cmd;
+
+      // TODO(yuraiz): filter out symbols
+
+      mach_vm_address_t sym_addr = linkedit_slide + command->symoff;
+      mach_vm_size_t sym_size = sizeof(struct nlist_64) * command->nsyms;
+      module->syms_range = rng_1u64(sym_addr, sym_addr + sym_size);
+      module->sym_count = command->nsyms;
+
+      mach_vm_address_t str_addr = linkedit_slide + command->stroff;
+      module->symstr_range = rng_1u64(str_addr, str_addr + command->strsize);
+    }
+    if(ld_cmd->cmd == LC_DYSYMTAB)
+    {
+      module->dysymtab = *(struct dysymtab_command *)ld_cmd;
+      module->dysymtab.indirectsymoff += linkedit_slide;
+    }
+
+    command_buf += ld_cmd->cmdsize;
   }
 
   scratch_end(scratch);
