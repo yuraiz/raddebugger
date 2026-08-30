@@ -446,10 +446,11 @@ mac_dmn_process_lookup_symbol_name(Arena *arena, DMN_Handle process_handle, U64 
   // TODO(yuraiz): reads from the process every time, and is called directly in eval code.
   // Make a normal abstraction with caching.
 
+  MAC_DMN_Process *process = mac_dmn_process_from_handle(process_handle);
+  if(process == 0 || process->ctx == 0) {return str8_zero();}
+
   Temp scratch = scratch_begin(&arena, 1);
   String8 result = {};
-
-  MAC_DMN_Process *process = mac_dmn_process_from_handle(process_handle);
 
   //- yuraiz: find the module 
   MAC_DMN_Module *target_module = 0;
@@ -491,9 +492,8 @@ mac_dmn_process_lookup_symbol_name(Arena *arena, DMN_Handle process_handle, U64 
           U32 strx = syms[idx].n_un.n_strx;
           U64 val = syms[idx].n_value;
           B32 has_str = strx != 0;
-          B32 is_func = (syms[idx].n_type & N_EXT) != 0;
 
-          if(has_str && is_func && val <= target && best_vaddr < val)
+          if(has_str && val <= target && best_vaddr < val)
           {
             best_vaddr = val;
             str_off = strx;
@@ -512,6 +512,11 @@ mac_dmn_process_lookup_symbol_name(Arena *arena, DMN_Handle process_handle, U64 
         mac_dmn_process_read(process, str_range, str_buf);
 
         String8 string = str8_cstring_capped(str_buf, str_buf + dim_1u64(str_range));
+        // strip the initial underscore to match the style of the other tools
+        if(string.size > 0 && string.str[0] == '_')
+        {
+          string = str8_skip(string, 1);
+        }
         result = str8_copy(arena, string);
       }
   }
