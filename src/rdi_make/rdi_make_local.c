@@ -3578,6 +3578,48 @@ rdim_bake(Arena *arena, RDIM_BakeParams *params)
   lane_sync_u64(&baked_top_level_info, lane_from_task_idx(0));
   lane_sync_u64(&baked_binary_sections, lane_from_task_idx(1));
   lane_sync_u64(&baked_binary_sections_count, lane_from_task_idx(1));
+
+  // NOTE(yuraiz): DWARF debug info sometimes doesn't map function epilogues to lines
+  // that breaks stepping in raddbg, as the actual return function appears outside of the
+  // function range and it fails to step out of functions.
+  //
+  // I guess that should be handled in a different place, maybe in the d2r conversion,
+  // maybe the debugger itself is expected to skip epilogues automatically.
+  // TODO(yuraiz): Figure out how to correctly handle that
+
+  //- yuraiz: fixup line info
+  if(lane_idx() == 0)
+  {
+    for EachIndex(idx, baked_line_tables->line_table_lines_count)
+    {
+      if(idx > 0 && baked_line_tables->line_table_lines[idx].file_idx == 0)
+      {
+        RDI_U64 replace_from = baked_line_tables->line_table_voffs[idx - 1];
+        RDI_U64 replace_with = baked_line_tables->line_table_voffs[idx];
+        baked_line_tables->line_table_voffs[idx - 1] = baked_line_tables->line_table_voffs[idx];
+        baked_line_tables->line_table_voffs[idx] = baked_line_tables->line_table_voffs[idx + 1];
+
+        RDI_U32 file_idx = baked_line_tables->line_table_lines[idx - 1].file_idx;
+        RDI_U32 line_idx = baked_line_tables->line_table_lines[idx - 1].line_num - 1;
+        RDI_SourceFile *src_file = &baked_src_files->source_files[file_idx];
+
+        RDI_SourceLineMap *line_map = &baked_src_files->source_line_maps[src_file->source_line_map_idx];
+
+        // TODO(yuraiz): that isn't not effective, but still not noticeable.
+        // maybe try binary search
+        
+        RDI_U64 *voffs = baked_src_files->source_line_map_voffs + line_map->line_map_voff_base_idx;
+        for EachIndex(voff_idx, line_map->voff_count)
+        {
+          if(voffs[voff_idx] == replace_from)
+          {
+            voffs[voff_idx] = replace_with;
+          }
+        }
+      }
+    }
+  }
+  lane_sync();
   
   //////////////////////////////////////////////////////////////
   //- rjf: @rdim_bake_stage package results
