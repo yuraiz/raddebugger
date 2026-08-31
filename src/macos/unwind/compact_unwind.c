@@ -5,6 +5,18 @@
 // So to figure out how to unwind precisely the current place in the function
 // needs to be analyzed.
 
+// TODO(yuraiz): handle case like that, generally 
+// it doesn't look that hard to emulate "ldp" and "add"
+// call sysconf(_SC_PAGESIZE); for reference
+//
+//   ldp fp, lr, [sp, #0x70] (flags=sp)
+//   ldp x20, x19, [sp, #0x60] (flags=sp)
+//   ldp x22, x21, [sp, #0x50] (flags=sp)
+//   add sp, sp, #0x80 (flags=sp,sp/var)
+// 
+// I think it can be handled similar to stp -> read back/front and
+// decode the immediate, restore the registers and increase sp.
+
 typedef enum COMP_UWND_ARM64InstCategory COMP_UWND_ARM64InstCategory;
 enum COMP_UWND_ARM64InstCategory {
   COMP_UWND_ARM64InstCategory_none,
@@ -30,6 +42,7 @@ enum COMP_UWND_ARM64InstCategory {
   // ldp fp, lr, [sp, #imm]
   // ldp fp, lr, [sp], #imm
   COMP_UWND_ARM64InstCategory_frame_pop,
+  // TODO(yuraiz): ldp regs, similar to stp
   // add sp, sp, #imm
   COMP_UWND_ARM64InstCategory_add_sp_sp,
   // ret, retab
