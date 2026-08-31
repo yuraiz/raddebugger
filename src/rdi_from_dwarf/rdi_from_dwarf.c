@@ -447,7 +447,7 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
         //- yuraiz: convert to absolute path
         String8 full_file_path = path_absolute_dst_from_relative_dst_src(scratch.arena, f->file_name, dir->file_name);
         //- yuraiz: resolve the relative path
-        if (str8_match_lit("..", full_file_path, StringMatchFlag_RightSideSloppy)) {
+        if (!str8_match_lit("/", full_file_path, StringMatchFlag_RightSideSloppy)) {
             DW2_LineTableFile *comp_unit_dir = &hdr->dirs.v[0];
             full_file_path = path_absolute_dst_from_relative_dst_src(scratch.arena, full_file_path, comp_unit_dir->file_name);
         }
