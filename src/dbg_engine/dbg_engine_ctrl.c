@@ -3227,7 +3227,7 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
           unwinder = UWND_Unwinder_Compact;
           COMP_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, COMP_UWND_ModuleUnwindInfo, 1);
           {
-            unwind_info->data = d_data_from_process_vaddr_range(arena, process, module_info->compact_unwind_vaddr_range, 0);
+            unwind_info->data = d_data_from_process_vaddr_range(arena, process_handle, module_info->compact_unwind_vaddr_range, 0);
           }
           unwind_info_opaque = unwind_info;
         }
@@ -3271,6 +3271,7 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
         {
           String8 exe_path = module_info->module_path;
           String8 exe_path_no_ext = str8_chop_last_dot(exe_path);
+          String8 exe_name = str8_skip_last_slash(exe_path);
           str8_list_pushf(scratch2.arena, &candidates, "%S.pdb", exe_path_no_ext);
           str8_list_pushf(scratch2.arena, &candidates, "%S.pdb", exe_path);
           str8_list_pushf(scratch2.arena, &candidates, "%S.rdi", exe_path_no_ext);
