@@ -500,8 +500,21 @@ compact_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info
     }break;
     case UNWIND_ARM64_MODE_DWARF:{
       U32 dwarf_offset = encoding & UNWIND_ARM64_DWARF_SECTION_OFFSET;
-      // TODO(yuraiz): Unwind using dwarf
       is_good = 0;
+
+      if(info->has_eh_frame)
+      {
+        UWND_ModuleInfo temp_module_info = {};
+        info->eh_unwind_info.fde_vaddr = info->eh_frame_range.min + dwarf_offset;
+        info->eh_unwind_info.cie_vaddr = info->eh_frame_range.min;
+        temp_module_info.base_vaddr = module_info->base_vaddr;
+        temp_module_info.unwind_info = &info->eh_unwind_info;
+
+        // unwind registers using fde
+        result = eh_uwnd_step(arch, memory_map, &temp_module_info, tls_vaddr, regs, cfa_out);
+        // restore pc from lr
+        regs->pc = regs->lr;
+      }
     }break;
     case UNWIND_ARM64_MODE_FRAME:{
       // NOTE(yuraiz): unwind info compresses entries for groups of functions.
