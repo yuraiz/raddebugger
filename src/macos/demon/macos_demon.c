@@ -638,6 +638,14 @@ mac_dmn_module_alloc(MAC_DMN_Process *process, U64 load_address, U64 name_vaddr)
     module->unwind_info_range.max += slide;
   }
 
+  module->eh_frame_range = mach_find_eh_frame(info);
+  if(module->eh_frame_range.min != 0)
+  {
+    module->eh_frame_range.min += slide;
+    module->eh_frame_range.max += slide;
+  }
+  // module->eh_frame_range = rng_1u64(0, 0);
+
   struct section_64 stub_section = mach_get_section_64(info,  s("__TEXT"), s("__stubs"));
   module->stub_size = stub_section.reserved2;
   module->stub_idx = stub_section.reserved1;
@@ -1117,6 +1125,8 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
   // U64 debug_info_age;
 
   module_info->compact_unwind_vaddr_range = module->unwind_info_range;
+
+  module_info->eh_frame_header_vaddr_range = module->eh_frame_range;
   
   // // rjf: thread-local storage info
   // U64 tls_index;
@@ -1698,6 +1708,7 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, ProcessLaunchParams *params)
 	posix_spawnattr_init(&attr);
 	posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED | _POSIX_SPAWN_DISABLE_ASLR);
 
+  // TODO(yuraiz): set workdir
 	int spawn_code = posix_spawnp(&pid, argv[0], 0, &attr, argv, envp);
 
 	posix_spawnattr_destroy(&attr);

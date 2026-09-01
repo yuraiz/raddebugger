@@ -1,6 +1,9 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
+// TODO(yuraiz): split eh_uwnd_step into two parts: the generic eh_uwnd_step used for linux,
+// and the part for the case when fde and cie addrs already known.
+
 internal UWND_StepResult
 eh_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info, U64 tls_vaddr, void *regs, U64 *cfa_out)
 {
@@ -17,8 +20,9 @@ eh_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info, U64
     U64 pc = arch_ip_from_reg_block(arch_info, regs);
     
     //- rjf: find nearest FDE entry to the IP
-    U64 fde_vaddr = 0;
-    if(header->version == 1 && header->fde_count != 0)
+    //- yuraiz: skip search if it was found
+    U64 fde_vaddr = unwind_info->fde_vaddr;
+    if(fde_vaddr == 0 && header->version == 1 && header->fde_count != 0)
     {
       // rjf: binary search to find FDE number
       U64 fde_num = 0;
@@ -121,8 +125,8 @@ eh_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info, U64
       }
       
       // rjf: FDE data -> CIE address
-      U64 cie_vaddr = 0;
-      if(!done)
+      U64 cie_vaddr = unwind_info->cie_vaddr;
+      if(!done && cie_vaddr == 0)
       {
         U64 cie_delta_off = (fde_fmt == DW_Format_32Bit ? 4 : 12);
         U64 cie_delta = 0;
@@ -248,6 +252,7 @@ eh_uwnd_step(Arch arch, MemoryMap *memory_map, UWND_ModuleInfo *module_info, U64
             //- rjf: location adjustments
             case DW_CFAOpCode_SetLoc:
             {
+              // TODO(yuraiz): verify that the value is valid
               off += eh_read_ptr(inst_data, off, ptr_ctx->pc_vaddr + inst_data_off + off, ptr_ctx, header->table_enc, &new_base_pc_off);
             }break;
             case DW_CFAOpCode_AdvanceLoc:

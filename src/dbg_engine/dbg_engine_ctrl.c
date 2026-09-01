@@ -2695,6 +2695,18 @@ d_ctrl_thread__module_open(D_Handle process, D_Handle module, U64 base_vaddr, DM
       COMP_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, COMP_UWND_ModuleUnwindInfo, 1);
       {
         unwind_info->data = d_data_from_process_vaddr_range(arena, process, module_info->compact_unwind_vaddr_range, 0);
+        // NOTE(yuraiz): Only some functions may have DWARF unwind info
+        if(dim_1u64(module_info->eh_frame_header_vaddr_range) != 0)
+        {
+          // TODO(yuraiz): Reduce that to unwind_info->eh_frame_range = module_info->eh_frame_header_vaddr_range
+          String8 eh_frame_hdr_data = d_data_from_process_vaddr_range(arena, process, module_info->eh_frame_header_vaddr_range, 0);
+          eh_frame_hdr_data = str8_skip(eh_frame_hdr_data, 8);
+          unwind_info->eh_unwind_info.ptr_ctx.pc_vaddr   = module_info->eh_frame_header_vaddr_range.min + 8;
+          unwind_info->eh_unwind_info.ptr_ctx.data_vaddr = module_info->eh_frame_header_vaddr_range.min + 8;
+          unwind_info->eh_unwind_info.header = eh_parse_frame_hdr(eh_frame_hdr_data, byte_size_from_arch(module_info->arch), &unwind_info->eh_unwind_info.ptr_ctx);
+          unwind_info->has_eh_frame = 1;
+          unwind_info->eh_frame_range = module_info->eh_frame_header_vaddr_range;
+        }
       }
       unwind_info_opaque = unwind_info;
     }
