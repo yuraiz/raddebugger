@@ -1127,7 +1127,7 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
   module_info->compact_unwind_vaddr_range = module->unwind_info_range;
 
   module_info->eh_frame_header_vaddr_range = module->eh_frame_range;
-  
+
   // // rjf: thread-local storage info
   // U64 tls_index;
   // U64 tls_offset;
@@ -1708,10 +1708,16 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, ProcessLaunchParams *params)
 	posix_spawnattr_init(&attr);
 	posix_spawnattr_setflags(&attr, POSIX_SPAWN_START_SUSPENDED | _POSIX_SPAWN_DISABLE_ASLR);
 
-  // TODO(yuraiz): set workdir
-	int spawn_code = posix_spawnp(&pid, argv[0], 0, &attr, argv, envp);
+  // TODO(yuraiz): Investigate posix_spawnattr_setexceptionports_np and other apple expections
+
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_addchdir(&actions, work_dir_path);
+
+	int spawn_code = posix_spawnp(&pid, argv[0], &actions, &attr, argv, envp);
 
 	posix_spawnattr_destroy(&attr);
+  posix_spawn_file_actions_destroy(&actions);
 
   if(spawn_code == 0)
   {
