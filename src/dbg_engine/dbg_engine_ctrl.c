@@ -2731,6 +2731,246 @@ d_ctrl_thread__append_program_defined_bp_traps(Arena *arena, D_Entity *bp, DMN_T
   dmn_trap_chunk_list_push(arena, traps_out, 256, &trap);
 }
 
+//- rjf: module lifetime open/close work
+
+internal void
+d_ctrl_thread__module_open(D_Handle process, D_Handle module, U64 base_vaddr, DMN_ModuleInfo *module_info)
+{
+  Temp scratch = scratch_begin(0,0);
+  
+  //////////////////////////////
+  //- rjf: allocate / set up basic per-module info
+  //
+  Arena *arena = arena_alloc();
+  String8 raddbg_data = d_data_from_process_vaddr_range(arena, process, shift_1u64(module_info->raddbg_info_voff_range, base_vaddr), 0);
+  
+  //////////////////////////////
+  //- rjf: prepare unwind info
+  //
+  UWND_Unwinder unwinder = UWND_Unwinder_Null;
+  void *unwind_info_opaque = 0;
+  {
+    //- rjf: PE/x64 unwinder
+    if(dim_1u64(module_info->pe_intel_pdatas_vaddr_range) != 0)
+    {
+      unwinder = UWND_Unwinder_PEx64;
+      PE_X64_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, PE_X64_UWND_ModuleUnwindInfo, 1);
+      {
+        U64 pdatas_count = dim_1u64(module_info->pe_intel_pdatas_vaddr_range) / sizeof(PE_IntelPdata);
+        String8 pdatas_data = d_data_from_process_vaddr_range(arena, process, module_info->pe_intel_pdatas_vaddr_range, 0);
+        pdatas_count = Min(pdatas_count, pdatas_data.size / sizeof(PE_IntelPdata));
+        PE_IntelPdata *pdatas = (PE_IntelPdata *)pdatas_data.str;
+        unwind_info->pdatas = pdatas;
+        unwind_info->pdatas_count = pdatas_count;
+      }
+      unwind_info_opaque = unwind_info;
+    }
+
+    //- rjf: apple "compact" unwinder
+    else if(OS_MAC)
+    {
+      unwinder = UWND_Unwinder_Compact;
+      COMP_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, COMP_UWND_ModuleUnwindInfo, 1);
+      {
+        unwind_info->data = d_data_from_process_vaddr_range(arena, process, module_info->compact_unwind_vaddr_range, 0);
+      }
+      unwind_info_opaque = unwind_info;
+    }
+    
+    //- rjf: .eh_frame unwinder
+    else if(dim_1u64(module_info->eh_frame_header_vaddr_range) != 0)
+    {
+      unwinder = UWND_Unwinder_EHFrame;
+      EH_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, EH_UWND_ModuleUnwindInfo, 1);
+      {
+        String8 eh_frame_hdr_data = d_data_from_process_vaddr_range(arena, process, module_info->eh_frame_header_vaddr_range, 0);
+        unwind_info->ptr_ctx.pc_vaddr   = module_info->eh_frame_header_vaddr_range.min;
+        unwind_info->ptr_ctx.data_vaddr = module_info->eh_frame_header_vaddr_range.min;
+        unwind_info->header = eh_parse_frame_hdr(eh_frame_hdr_data, byte_size_from_arch(module_info->arch), &unwind_info->ptr_ctx);
+      }
+      unwind_info_opaque = unwind_info;
+    }
+  }
+  
+  //////////////////////////////
+  //- rjf: compute local symbol server cache path for this debug info
+  //
+  String8 local_symbol_server_cache_path = smsv_local_debug_info_path_from_key(scratch.arena, str8_skip_last_slash(module_info->debug_info_path), module_info->debug_info_guid, module_info->debug_info_age);
+  
+  //////////////////////////////
+  //- rjf: pick default initial debug info path
+  //
+  String8 initial_debug_info_path = {0};
+  {
+    String8List candidates = {0};
+    
+    // rjf: push module-embedded debug info paths, try both relative-to-exe & absolute
+    if(module_info->debug_info_path.size != 0)
+    {
+      PathStyle path_style = path_style_from_str8(module_info->debug_info_path);
+      if(path_style == PathStyle_Relative)
+      {
+        String8 module_image_folder = str8_chop_last_slash(module_info->module_path);
+        str8_list_pushf(scratch.arena, &candidates, "%S/%S", module_image_folder, module_info->debug_info_path);
+      }
+      str8_list_push(scratch.arena, &candidates, module_info->debug_info_path);
+    }
+    
+    // rjf: push heuristic-based debug info paths
+    {
+      String8 exe_path = module_info->module_path;
+      String8 exe_path_no_ext = str8_chop_last_dot(exe_path);
+      String8 exe_name        = str8_skip_last_slash(exe_path);
+      str8_list_pushf(scratch.arena, &candidates, "%S.pdb", exe_path_no_ext);
+      str8_list_pushf(scratch.arena, &candidates, "%S.pdb", exe_path);
+      str8_list_pushf(scratch.arena, &candidates, "%S.rdi", exe_path_no_ext);
+      str8_list_pushf(scratch.arena, &candidates, "%S.rdi", exe_path);
+      str8_list_pushf(scratch.arena, &candidates, "%S.dSYM/Contents/Resources/DWARF/%S", exe_path, exe_name);
+    }
+    
+    // rjf: push local symbol server cache's path
+    if(local_symbol_server_cache_path.size != 0)
+    {
+      str8_list_push(scratch.arena, &candidates, local_symbol_server_cache_path);
+    }
+    
+    // rjf: pick first candidate that works
+    for EachNode(n, String8Node, candidates.first)
+    {
+      String8 candidate_path = n->string;
+      FileProperties props = properties_from_file_path(candidate_path);
+      if(props.modified != 0 && props.size != 0)
+      {
+        initial_debug_info_path = str8_copy(arena, path_normalized_from_string(scratch.arena, candidate_path));
+        break;
+      }
+    }
+  }
+  
+  //////////////////////////////
+  //- rjf: no found debug info path -> try to fall back on symbol server cache path.
+  //
+  // if it exists, we can just use it. if it doesn't, then we only want to pick it *if*
+  // automatic downloads are enabled.
+  //
+  if(initial_debug_info_path.size == 0 && d_ctrl_state->auto_download_debug_info && local_symbol_server_cache_path.size != 0)
+  {
+    initial_debug_info_path = str8_copy(arena, local_symbol_server_cache_path);
+  }
+  
+  //////////////////////////////
+  //- rjf: write 1 at attachment marker, to signify attachment
+  //
+  if(module_info->raddbg_is_attached_marker_voff != 0)
+  {
+    U8 new_value = 1;
+    d_process_write_struct(process, base_vaddr + module_info->raddbg_is_attached_marker_voff, &new_value);
+  }
+  
+  //////////////////////////////
+  //- rjf: fill info
+  //
+  D_ModuleInfo info = {0};
+  {
+    info.entry_point_voff             = module_info->entry_point_voff;
+    info.unwinder                     = unwinder;
+    info.unwind_info                  = unwind_info_opaque;
+    info.local_debug_info_path        = initial_debug_info_path;
+    info.dbg_name                     = str8_copy(arena, str8_skip_last_slash(module_info->debug_info_path));
+    info.dbg_guid                     = module_info->debug_info_guid;
+    info.dbg_age                      = module_info->debug_info_age;
+    info.raddbg_attached_marker_voff  = module_info->raddbg_is_attached_marker_voff;
+    info.raddbg_data                  = raddbg_data;
+  }
+  
+  //////////////////////////////
+  //- rjf: insert info into cache
+  //
+  {
+    D_ModuleInfoCache *cache = &d_ctrl_state->module_info_cache;
+    U64 hash = d_hash_from_handle(module);
+    U64 slot_idx = hash%cache->slots_count;
+    D_ModuleInfoCacheSlot *slot = &cache->slots[slot_idx];
+    Stripe *stripe = stripe_from_slot_idx(&cache->stripes, slot_idx);
+    MutexScopeW(stripe->rw_mutex)
+    {
+      D_ModuleInfoCacheNode *node = 0;
+      for EachNode(n, D_ModuleInfoCacheNode, slot->first)
+      {
+        if(d_handle_match(n->module, module))
+        {
+          node = n;
+          break;
+        }
+      }
+      if(!node)
+      {
+        node = push_array(arena, D_ModuleInfoCacheNode, 1);
+        DLLPushBack(slot->first, slot->last, node);
+        node->module  = module;
+        node->arena   = arena;
+        node->v       = info;
+      }
+    }
+  }
+  
+  scratch_end(scratch);
+}
+
+internal void
+d_ctrl_thread__module_close(D_Handle process, D_Handle module, U64 base_vaddr)
+{
+  DMN_Handle process_dmn = d_dmn_from_handle(process);
+  
+  //////////////////////////////
+  //- rjf: evict module info from cache
+  //
+  U64 raddbg_attached_marker_voff = 0;
+  {
+    D_ModuleInfoCache *cache = &d_ctrl_state->module_info_cache;
+    U64 hash = d_hash_from_handle(module);
+    U64 slot_idx = hash%cache->slots_count;
+    Stripe *stripe = stripe_from_slot_idx(&cache->stripes, slot_idx);
+    D_ModuleInfoCacheSlot *slot = &cache->slots[slot_idx];
+    MutexScopeW(stripe->rw_mutex) for(;;)
+    {
+      D_ModuleInfoCacheNode *node = 0;
+      for(D_ModuleInfoCacheNode *n = slot->first; n != 0; n = n->next)
+      {
+        if(d_handle_match(n->module, module))
+        {
+          node = n;
+          break;
+        }
+      }
+      if(node && access_pt_is_expired(&node->access_pt, .time = 0, .update_idxs = 0))
+      {
+        raddbg_attached_marker_voff = node->v.raddbg_attached_marker_voff;
+        DLLRemove(slot->first, slot->last, node);
+        arena_release(node->arena);
+        break;
+      }
+      if(node)
+      {
+        cond_var_wait_rw_w(stripe->cv, stripe->rw_mutex, max_U64);
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
+  
+  //////////////////////////////
+  //- rjf: write 0 at attachment marker, to signify detachment
+  //
+  if(raddbg_attached_marker_voff != 0)
+  {
+    U8 new_value = 0;
+    d_process_write_struct(process, base_vaddr + raddbg_attached_marker_voff, &new_value);
+  }
+}
+
 //- rjf: dump process closing work
 
 internal void
@@ -3188,11 +3428,6 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
       D_Handle module_handle = d_handle_from_dmn(D_MachineID_Local, event->module);
       String8 module_path = path_normalized_from_string(scratch2.arena, event->string);
       U64 exe_timestamp = properties_from_file_path(module_path).modified;
-      // TODO(yuraiz): thread_module_open here
-      
-
-
-
       
       DMN_ModuleInfo *module_info = event->module_info;
       U64 base_vaddr = event->address;
@@ -3228,6 +3463,18 @@ d_ctrl_thread__next_dmn_event(Arena *arena, DMN_CtrlCtx *ctrl_ctx, D_Msg *msg, D
           COMP_UWND_ModuleUnwindInfo *unwind_info = push_array(arena, COMP_UWND_ModuleUnwindInfo, 1);
           {
             unwind_info->data = d_data_from_process_vaddr_range(arena, process_handle, module_info->compact_unwind_vaddr_range, 0);
+            // NOTE(yuraiz): Only some functions may have DWARF unwind info
+            if(dim_1u64(module_info->eh_frame_header_vaddr_range) != 0)
+            {
+              // TODO(yuraiz): Reduce that to unwind_info->eh_frame_range = module_info->eh_frame_header_vaddr_range
+              String8 eh_frame_hdr_data = d_data_from_process_vaddr_range(arena, process_handle, module_info->eh_frame_header_vaddr_range, 0);
+              eh_frame_hdr_data = str8_skip(eh_frame_hdr_data, 8);
+              unwind_info->eh_unwind_info.ptr_ctx.pc_vaddr   = module_info->eh_frame_header_vaddr_range.min + 8;
+              unwind_info->eh_unwind_info.ptr_ctx.data_vaddr = module_info->eh_frame_header_vaddr_range.min + 8;
+              unwind_info->eh_unwind_info.header = eh_parse_frame_hdr(eh_frame_hdr_data, byte_size_from_arch(module_info->arch), &unwind_info->eh_unwind_info.ptr_ctx);
+              unwind_info->has_eh_frame = 1;
+              unwind_info->eh_frame_range = module_info->eh_frame_header_vaddr_range;
+            }
           }
           unwind_info_opaque = unwind_info;
         }

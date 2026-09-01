@@ -294,7 +294,7 @@ mach_get_section_64(MACH_Bin info, String8 segment_name, String8 section_name)
 }
 
 internal Rng1U64
-mach_compute_segment_range(MACH_Bin info, String8 segment_name, String8 section_name)
+mach_compute_section_range(MACH_Bin info, String8 segment_name, String8 section_name)
 {
   struct section_64 s = mach_get_section_64(info, segment_name, section_name);
   return r1u64(s.addr, s.addr + s.size);
@@ -303,13 +303,13 @@ mach_compute_segment_range(MACH_Bin info, String8 segment_name, String8 section_
 internal Rng1U64
 mach_find_unwind_info(MACH_Bin info)
 {
-  return mach_compute_segment_range(info, s("__TEXT"), s("__unwind_info"));
+  return mach_compute_section_range(info, s("__TEXT"), s("__unwind_info"));
 }
 
 internal Rng1U64
 mach_find_eh_frame(MACH_Bin info)
 {
-  return mach_compute_segment_range(info, s("__TEXT"), s("__eh_frame"));
+  return mach_compute_section_range(info, s("__TEXT"), s("__eh_frame"));
 }
 
 

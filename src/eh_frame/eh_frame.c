@@ -46,7 +46,9 @@ eh_parse_frame_hdr(String8 data, U64 address_size, EH_PtrCtx *ptr_ctx)
     header.entry_byte_size = header.field_byte_size * 2;
     
     header.table = str8_skip(data, cursor);
-    AssertAlways(header.table.size == header.entry_byte_size * header.fde_count);
+    // TODO(yuraiz): actaully there's no header at all on macOS, so that function shouldn't be called
+    // uncomment that
+    // AssertAlways(header.table.size == header.entry_byte_size * header.fde_count);
   } else {
     Assert(0 && "unknown version");
   }

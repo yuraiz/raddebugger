@@ -13,6 +13,9 @@ typedef struct COMP_UWND_ModuleUnwindInfo COMP_UWND_ModuleUnwindInfo;
 struct COMP_UWND_ModuleUnwindInfo
 {
   String8 data;
+  EH_UWND_ModuleUnwindInfo eh_unwind_info;
+  B32 has_eh_frame;
+  Rng1U64 eh_frame_range;
 };
 
 ////////////////////////////////
