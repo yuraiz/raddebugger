@@ -12,6 +12,8 @@ struct EH_UWND_ModuleUnwindInfo
 {
   EH_FrameHdr header;
   EH_PtrCtx ptr_ctx;
+  U64 fde_vaddr;
+  U64 cie_vaddr;
 };
 
 ////////////////////////////////
