@@ -13962,6 +13962,9 @@ rd_frame(void)
             UI_Key key = ui_key_from_string(ui_key_zero(), s("lossy_exit_confirmation"));
             if(attached_to_live_processes && !rd_regs()->force_confirm && !ui_key_match(rd_state->popup_key, key))
             {
+              //- yuraiz: on macos exiting may be started from the app menu
+              rd_cmd(RD_CmdKind_BringToFront);
+
               rd_state->popup_key = key;
               rd_state->popup_active = 1;
               arena_clear(rd_state->popup_arena);
