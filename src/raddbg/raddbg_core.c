@@ -12038,10 +12038,11 @@ rd_frame(void)
       }
       
       //- rjf: try window close
-      if(!take && event->kind == WM_EventKind_WindowClose && ws != 0)
+      if(!take && event->kind == WM_EventKind_WindowClose)
       {
-        take = 1;
-        rd_cmd(RD_CmdKind_Exit);
+        // TODO(yuraiz): Ask Ryan what WM_EventKind_WindowClose is supposed to mean.
+        // as I understand window=0 means quit, but it just always exitted;
+        rd_cmd(ws == &rd_nil_window_state ? RD_CmdKind_Exit : RD_CmdKind_CloseWindow);
       }
       
       //- rjf: try menu bar operations

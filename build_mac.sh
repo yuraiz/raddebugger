@@ -87,38 +87,15 @@ then
   BIN_NAME="./build/raddbg"
   APP_BUNDLE="./build/${APP_NAME}.app"
 
-  # 1. Create the directory structure
+  # Create the directory structure
   rm -rf "$APP_BUNDLE"
   mkdir -p "$APP_BUNDLE/Contents/MacOS"
   mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-  # 2. Copy binary and assets
+  # Copy binary, assets and info.plist
   cp "$BIN_NAME" "$APP_BUNDLE/Contents/MacOS/"
   cp -r "./data/mac_resources/" "$APP_BUNDLE/Contents/Resources"
-
-  # 3. Create a minimal Info.plist
-  cat <<'EOF' > "$APP_BUNDLE/Contents/Info.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>raddbg</string>
-    <key>CFBundleIconFile</key>
-  	<string>raddbg</string>
-  	<key>CFBundleIconName</key>
-  	<string>raddbg</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.epicgames.raddbg</string>
-    <key>CFBundleName</key>
-    <string>The RAD Debugger</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>LSApplicationCategoryType</key>
-  	<string>public.app-category.developer-tools</string>
-</dict>
-</plist>
-EOF
+  cp "./data/macos.info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
   plutil -convert xml1 "$APP_BUNDLE/Contents/Info.plist"
 
