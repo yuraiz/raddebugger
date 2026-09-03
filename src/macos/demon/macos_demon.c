@@ -1091,8 +1091,15 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
   Temp scratch = scratch_begin(&arena, 1);
 
   char* path_buffer = push_array(scratch.arena, char, PATH_MAX);
-  mac_dmn_mach_read_op_mem(module->name_vaddr, PATH_MAX, path_buffer, process->task);
-  String8 path = str8_cstring(path_buffer);
+
+  // NOTE(yuraz): The path may be at the end of the readable region
+  U64 to_read = PATH_MAX;
+  for(U64 bytes_read = 0;to_read > 0 && bytes_read != to_read; to_read--)
+  {
+    bytes_read = mac_dmn_process_read(process, rng_1u64(module->name_vaddr, module->name_vaddr + to_read), path_buffer);
+  }
+
+  String8 path = str8_copy(arena, str8_cstring(path_buffer));
 
   DMN_Event *e = dmn_event_list_push(arena, events);
   e->kind            = DMN_EventKind_LoadModule;
