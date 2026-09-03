@@ -14,6 +14,7 @@
 # import <Metal/Metal.h>
 # import <MetalKit/MetalKit.h>
 # import <Carbon/Carbon.h>
+# import <QuartzCore/QuartzCore.h>
 #undef nil
 #define internal      static
 #define global        static
@@ -22,13 +23,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 //~ brt: Window State
 
-@interface MAC_WM_NSWindow : NSWindow<NSWindowDelegate>
-{
-  NSTimer *live_resize_timer;
-}
-@property (nonatomic) NSEventModifierFlags previous_flags;
+@interface MAC_WM_NSView : NSView
 @end
 
+@interface MAC_WM_NSWindow : NSWindow<NSWindowDelegate>
+@end
+
+@interface MAC_WM_NSApplicationDelegate : NSObject<NSApplicationDelegate>
+@end
 
 typedef struct MAC_WM_TitleBarClientArea MAC_WM_TitleBarClientArea;
 struct MAC_WM_TitleBarClientArea
@@ -43,13 +45,15 @@ struct MAC_WM_Window
   MAC_WM_Window *next;
   MAC_WM_Window *prev;
   MAC_WM_NSWindow *nswindow;
-  B32 first_paint_done;
   B32 custom_border;
   F32 custom_border_title_thickness;
-  B32 dragging_window;
   Arena *paint_arena;
   MAC_WM_TitleBarClientArea *first_title_bar_client_area;
   MAC_WM_TitleBarClientArea *last_title_bar_client_area;
+  B32 is_resizing;
+  NSRect resize_start_rect;
+  NSPoint resize_start_pos;
+  U64 resize_direction;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -62,9 +66,10 @@ struct MAC_WM_State
   MAC_WM_Window *first_window;
   MAC_WM_Window *last_window;
   MAC_WM_Window *free_window;
-  B32 in_live_resize;
   WM_Cursor last_set_cursor;
   WM_SystemInfo gfx_info;
+  WM_Modifiers modifiers;
+  B32 do_frame;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -77,16 +82,16 @@ global Arena *mac_wm_event_arena = 0;
 ///////////////////////////////////////////////////////////////////////////////
 //~ brt: Helpers
 
-internal NSString *mac_wm_nsstring_from_string( String8 string );
-internal WM_Window mac_wm_handle_from_window( MAC_WM_Window *window );
-internal MAC_WM_Window *mac_wm_window_from_handle( WM_Window handle );
-internal NSWindow *mac_wm_nswindow_from_window( MAC_WM_Window *window );
-internal MAC_WM_Window *mac_wm_window_from_nswindow( NSWindow *window );
-internal WM_Key mac_wm_os_key_from_vkey( U32 vkey );
+internal NSString *mac_wm_nsstring_from_string(String8 string);
+internal WM_Window mac_wm_handle_from_window(MAC_WM_Window *window);
+internal MAC_WM_Window *mac_wm_window_from_handle(WM_Window handle);
+internal NSWindow *mac_wm_nswindow_from_window(MAC_WM_Window *window);
+internal MAC_WM_Window *mac_wm_window_from_nswindow(NSWindow *window);
+internal WM_Key mac_wm_os_key_from_vkey(U32 vkey);
 internal void mac_wm_set_window_buttons_positions(MAC_WM_Window *window);
 
-internal WM_Event *mac_wm_push_event( WM_EventKind kind, MAC_WM_Window *window );
-
-internal void mac_wm_send_dummy_event( void );
+internal WM_Event * mac_wm_push_event(WM_EventKind kind, MAC_WM_Window *window);
+internal void mac_wm_push_nsevent(NSEvent *ns_event);
+internal void mac_wm_send_dummy_event(void);
 
 #endif // MACOS_WINDOW_MANAGER_H

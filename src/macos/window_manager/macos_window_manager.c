@@ -48,114 +48,272 @@
 ///////////////////////////////////////////////////////////////////////////////
 //~ brt: Helpers
 
+@implementation MAC_WM_NSView
+
+// NOTE(yuraiz): By default the NSWindow is draggable even by the hidden titlebar.
+//
+// To disable that behavior NSView with all those methods must be inside of the window
+// Methods acceptsFirstMouse acceptsFirstResponder, _opaqueRectForWindowMoveWhenInTitlebar,
+// and mouseDown must all be implemented to forbid dragging by the transparent titlebar.
+//
+// No effect when the titlebar is shown.
+
+- (BOOL)acceptsFirstMouse:(NSEvent *)event
+{
+  return YES;
+}
+
+- (BOOL)acceptsFirstResponder
+{
+  return YES;
+}
+
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar
+{
+  return self.bounds;
+}
+
+// prevent beeps on keypresses
+- (BOOL)performKeyEquivalent:(NSEvent *)event
+{
+  return NO;
+}
+
+#define nsevent_responder(name) \
+- (void)name:(NSEvent *)event   \
+{                               \
+  mac_wm_push_nsevent(event);   \
+}                         
+
+// mouse events
+nsevent_responder(mouseUp);
+nsevent_responder(mouseDown);
+nsevent_responder(mouseMoved);
+nsevent_responder(mouseExited);
+nsevent_responder(mouseDragged);
+nsevent_responder(rightMouseUp);
+nsevent_responder(rightMouseDown);
+nsevent_responder(rightMouseDragged);
+nsevent_responder(otherMouseUp);
+nsevent_responder(otherMouseDown);
+nsevent_responder(otherMouseDragged);
+// other events
+nsevent_responder(swipeWithEvent);
+nsevent_responder(scrollWheel);
+nsevent_responder(pressureChangeWithEvent);
+nsevent_responder(magnifyWithEvent);
+nsevent_responder(flagsChanged);
+// key events
+nsevent_responder(keyUp);
+nsevent_responder(keyDown);
+
+#undef nsevent_responder
+
+@end
+
+@interface NSWindow (Private)
+
+- (long long)_resizeDirectionForMouseLocation:(CGPoint)location;
+- (void)_resizeWithEvent:(NSEvent *)event;
+
+@end
+
 @implementation MAC_WM_NSWindow
-- (void)flagsChanged:(NSEvent *)ns_event
+
+- (void)sendEvent:(NSEvent *)event {
+  MAC_WM_Window *window = mac_wm_window_from_nswindow(self);
+
+  //- yuraiz: do incremental window resizing
+  if(window->is_resizing)
+  {
+    [self _resizeWithEvent:event];
+  }
+
+  //- yuraiz: fall back to the default behavior
+  else
+  {
+    [super sendEvent:event];
+  }
+}
+
+// NOTE(yuraiz): By default NSWindow takes control of the event loop during resizing
+// and only sends update events by calling methods. 
+//
+// Instead, resize incrementally for each event and return from the function.
+- (void)_resizeWithEvent:(NSEvent *)event {
+  MAC_WM_Window *window = mac_wm_window_from_nswindow(self);
+
+  //- yuraiz: the first time is called by super sendEvent
+  if(!window->is_resizing)
+  {
+    //- yuraiz: init resizing state
+    window->is_resizing = 1;
+    window->resize_start_rect = self.frame;
+    window->resize_start_pos = NSEvent.mouseLocation;
+    window->resize_direction = [self _resizeDirectionForMouseLocation:event.locationInWindow];
+
+    //- yuraiz: reencode the resize direction
+    B32 top = 0;
+    B32 bottom = 0;
+    B32 left = 0;
+    B32 right = 0;
+    switch(window->resize_direction)
+    {
+      default:{}break;
+      case 0:{right = 1;}break;
+      case 1:{top = 1;right = 1;}break;
+      case 2:{top = 1;}break;
+      case 3:{top = 1;left = 1;}break;
+      case 4:{left = 1;}break;
+      case 5:{bottom = 1;left = 1;}break;
+      case 6:{bottom = 1;}break;
+      case 7:{bottom = 1;right = 1;}break;
+    }
+
+    //- yuraiz: snap initial mouse position to window bounds
+    if(right)
+    {
+      window->resize_start_pos.x = self.frame.origin.x + self.frame.size.width;
+    }
+    if(left)
+    {
+      window->resize_start_pos.x = self.frame.origin.x;
+    }
+    if(top)
+    {
+      window->resize_start_pos.y = self.frame.origin.y + self.frame.size.height;
+    }
+    if(bottom)
+    {
+      window->resize_start_pos.y = self.frame.origin.y;
+    }
+  }
+
+  //- yuraiz: end resizing
+  else if(event.type == NSEventTypeLeftMouseUp)
+  {
+    window->is_resizing = 0;
+  }
+
+  //- yuraiz: do resizing step
+  else if(event.type == NSEventTypeLeftMouseDragged)
+  {
+    NSPoint current_pos = NSEvent.mouseLocation;
+
+    //- yuraiz: clamp mouse to the screen safe area
+    NSRect screen_frame = self.screen.visibleFrame;
+    CGFloat max_mouse_y = screen_frame.origin.y + screen_frame.size.height;
+    current_pos.y = Clamp(screen_frame.origin.y, current_pos.y, max_mouse_y);
+    CGFloat max_mouse_x = screen_frame.origin.x + screen_frame.size.width;
+    current_pos.x = Clamp(screen_frame.origin.x, current_pos.x, max_mouse_x);
+
+    //- yuraiz: delta from initial mouse-down
+    CGFloat delta_x = current_pos.x - window->resize_start_pos.x;
+    CGFloat delta_y = current_pos.y - window->resize_start_pos.y;
+
+    //- yuraiz: reencode the resize direction
+    B32 top = 0;
+    B32 bottom = 0;
+    B32 left = 0;
+    B32 right = 0;
+    switch(window->resize_direction)
+    {
+      default:{}break;
+      case 0:{right = 1;}break;
+      case 1:{top = 1;right = 1;}break;
+      case 2:{top = 1;}break;
+      case 3:{top = 1;left = 1;}break;
+      case 4:{left = 1;}break;
+      case 5:{bottom = 1;left = 1;}break;
+      case 6:{bottom = 1;}break;
+      case 7:{bottom = 1;right = 1;}break;
+    }
+
+    //- yuraiz: calculate minimum size
+    CGFloat min_width = Max(self.minSize.width, 300);
+    CGFloat min_height = Max(self.minSize.height, 300);
+
+    //- yuraiz: resize the frame accordingly
+    NSRect frame = window->resize_start_rect;
+    if(right)
+    {
+      frame.size.width = Max(frame.size.width + delta_x, min_width);
+    }
+    if(left)
+    {
+      CGFloat new_width = Max(frame.size.width - delta_x, min_width);
+      frame.origin.x += frame.size.width - new_width;
+      frame.size.width = new_width;
+    }
+    if(top)
+    {
+      frame.size.height = Max(frame.size.height + delta_y, min_height);
+    }
+    if(bottom)
+    {
+      CGFloat new_height = Max(frame.size.height - delta_y, min_height);
+      frame.origin.y += frame.size.height - new_height;
+      frame.size.height = new_height;
+    }
+
+    //- yuraiz: set contents placement to minimize noticeable delay
+    if(bottom || right)
+    {
+      self.contentView.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
+    }
+    else
+    {
+      self.contentView.layerContentsPlacement = NSViewLayerContentsPlacementBottomRight;
+    }
+
+    //- yuraiz: set frame and queue display for next cycle
+    {
+      [CATransaction begin];
+      [CATransaction setDisableActions:YES];
+      [self setFrame:frame display:NO];
+      [self performSelector:@selector(displayIfNeeded) withObject:0 afterDelay:0];
+      [CATransaction commit];
+    }
+
+    mac_wm_state->do_frame = 1;
+  }
+}
+
+- (void)windowWillEnterFullScreen:(NSNotification *)notification
 {
-  // TODO(yuraiz): Ask Brett why that method is so long, why not just 10 LOC as it was, and why a method specifically?
-  MAC_WM_Window *window = mac_wm_window_from_nswindow(ns_event.window);
-  NSEventModifierFlags new_flags = [ns_event modifierFlags];
-  NSEventModifierFlags old_flags = self.previous_flags;
-  if ((new_flags & NSEventModifierFlagShift) != (old_flags & NSEventModifierFlagShift))
-  {
-    WM_Event *event = mac_wm_push_event(!!(new_flags&NSEventModifierFlagShift) ? WM_EventKind_Press : WM_EventKind_Release, window);
-    event->key = WM_Key_Shift;
-    if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
-    if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
-    if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
-    //if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
-  }
-  if ((new_flags & NSEventModifierFlagControl) != (old_flags & NSEventModifierFlagControl))
-  {
-    WM_Event *event = mac_wm_push_event(!!(new_flags&NSEventModifierFlagControl) ? WM_EventKind_Press : WM_EventKind_Release, window);
-    event->key = WM_Key_Ctrl;
-    if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
-    if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
-    if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
-    //if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
-  }
-  if ((new_flags & NSEventModifierFlagOption) != (old_flags & NSEventModifierFlagOption))
-  {
-    WM_Event *event = mac_wm_push_event(!!(new_flags&NSEventModifierFlagOption) ? WM_EventKind_Press : WM_EventKind_Release, window);
-    event->key = WM_Key_Alt;
-    if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
-    if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
-    if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
-    //if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
-  }
-  // NOTE(yuraiz): I'm too lazy to implement separate keybindings for macOS, so just map cmd to ctrl
-  if ((new_flags & NSEventModifierFlagCommand) != (old_flags & NSEventModifierFlagCommand))
-  {
-    WM_Event *event = mac_wm_push_event(!!(new_flags&NSEventModifierFlagCommand) ? WM_EventKind_Press : WM_EventKind_Release, window);
-    event->key = WM_Key_Ctrl;
-    if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
-    if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
-    if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
-    // if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
-  }
-#if 0
-  if ((new_flags & NSEventModifierFlagCommand) != (old_flags & NSEventModifierFlagCommand))
-  {
-    WM_Event *event = mac_wm_push_event(!!(new_flags&NSEventModifierFlagCommand) ? WM_EventKind_Press : WM_EventKind_Release, window);
-    event->key = WM_Key_Cmd;
-    if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
-    if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
-    if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
-    if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
-  }
-#endif
-  if ((new_flags & NSEventModifierFlagCapsLock) != (old_flags & NSEventModifierFlagCapsLock))
-  {
-    WM_Event *event = mac_wm_push_event(!!(new_flags&NSEventModifierFlagCapsLock) ? WM_EventKind_Press : WM_EventKind_Release, window);
-    event->key = WM_Key_CapsLock;
-    if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
-    if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
-    if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
-    //if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
-  }
-  self.previous_flags = new_flags;
-  [super flagsChanged:ns_event];
+  NSWindow *nswindow = (NSWindow *)notification.object;
+  nswindow.contentView.layerContentsPlacement = NSViewLayerContentsPlacementScaleAxesIndependently;
 }
 
-- (BOOL)allowsConcurrentViewDrawing {
-  return YES;
-}
-
-- (BOOL)inLiveResize {
-  return YES;
-}
-
--(void)windowWillStartLiveResize:(NSNotification *)notification
-{
-  mac_wm_state->in_live_resize = 1;
-}
-
--(void)windowDidEndLiveResize:(NSNotification *)notification
-{
-  mac_wm_state->in_live_resize = 0;
-}
-
--(void)windowDidResize:(NSNotification *)notification
+- (void)windowDidResize:(NSNotification *)notification
 {
   MAC_WM_Window *window = mac_wm_window_from_nswindow(notification.object);
+  mac_wm_set_window_buttons_positions(window);
+}
 
-  // mac_wm_set_window_buttons_positions(window);
-
-  // NOTE(yuraiz): Calling rd_frame during initial window resize results in segmentation fault
-  if (!([window->nswindow styleMask] & NSWindowStyleMaskFullScreen))
-  {
-    // NOTE(yuraiz): AppKit takes control of the event loop during
-    // window resizing, so it's impossible to otherwize redraw during resizing.
-    rd_frame();
-  }
-
-  window->nswindow.viewsNeedDisplay = YES;
+- (BOOL)windowShouldClose:(NSWindow *)nswindow
+{
+  MAC_WM_Window *window = mac_wm_window_from_nswindow(nswindow);
+  // NOTE(yuraiz): Request window close from the rd layer.
+  mac_wm_push_event(WM_EventKind_WindowClose, window);
+  return NO;
 }
 
 - (void)windowWillClose:(NSNotification *)notification
 {
-  NSWindow *ns_window = notification.object;
-  MAC_WM_Window *window = mac_wm_window_from_nswindow(ns_window);
-  mac_wm_push_event(WM_EventKind_WindowClose, window);
+  MAC_WM_Window *window = mac_wm_window_from_nswindow(notification.object);
+  // mac_wm_push_event(WM_EventKind_WindowClose, window);
+
+  DLLRemove(mac_wm_state->first_window, mac_wm_state->last_window, window);
+  if (mac_wm_state->free_window)
+  {
+    SLLStackPush(mac_wm_state->free_window, window);
+  }
+  else 
+  {
+    mac_wm_state->free_window = window;
+  }
+
 }
 
 - (NSDragOperation) draggingEntered:(id<NSDraggingInfo>) sender
@@ -164,7 +322,13 @@
   return result;
 }
 
-- (BOOL) performDragOperation:(id<NSDraggingInfo>) sender
+// prevent beeps on keypresses
+- (BOOL)performKeyEquivalent:(NSEvent *)event
+{
+  return NO;
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>) sender
 {
   NSPasteboard *pboard = [sender draggingPasteboard];
   NSWindow *ns_window = [sender draggingDestinationWindow];
@@ -204,8 +368,19 @@
 
 @end
 
+@implementation MAC_WM_NSApplicationDelegate
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
+{
+  mac_wm_push_event(WM_EventKind_WindowClose, 0);
+  mac_wm_send_dummy_event();
+  return NSTerminateCancel;
+}
+
+@end
+
 internal NSString *
-mac_wm_nsstring_from_string( String8 string )
+mac_wm_nsstring_from_string(String8 string)
 {
   NSString *result = [[NSString alloc] initWithBytes:string.str
                                               length:string.size
@@ -214,27 +389,27 @@ mac_wm_nsstring_from_string( String8 string )
 }
 
 internal WM_Window
-mac_wm_handle_from_window( MAC_WM_Window *window )
+mac_wm_handle_from_window(MAC_WM_Window *window)
 {
-  WM_Window handle = { (U64) window };
+  WM_Window handle = {(U64)window};
   return handle;
 }
 
 internal MAC_WM_Window *
-mac_wm_window_from_handle( WM_Window handle )
+mac_wm_window_from_handle(WM_Window handle)
 {
-  MAC_WM_Window *window = (MAC_WM_Window *) handle.u64[0];
+  MAC_WM_Window *window = (MAC_WM_Window *)handle.u64[0];
   return window;
 }
 
 internal NSWindow *
-mac_wm_nswindow_from_window( MAC_WM_Window *window )
+mac_wm_nswindow_from_window(MAC_WM_Window *window)
 {
   return window->nswindow;
 }
 
 internal MAC_WM_Window *
-mac_wm_window_from_nswindow( NSWindow *window )
+mac_wm_window_from_nswindow(NSWindow *window)
 {
   MAC_WM_Window *result = 0;
   for (MAC_WM_Window *w = mac_wm_state->first_window; w; w = w->next)
@@ -249,22 +424,11 @@ mac_wm_window_from_nswindow( NSWindow *window )
   return result;
 } 
 
-internal Rng2F32
-mac_wm_rng2f32_from_nsrect( NSRect rect )
-{
-  Rng2F32 r = {0};
-  r.x0 = (F32)(rect.origin.x);
-  r.x1 = (F32)(rect.origin.x + rect.size.width);
-  r.y0 = (F32)(rect.origin.y);
-  r.y1 = (F32)(rect.origin.y + rect.size.height);
-  return r;
-}
-
 internal void
-mac_wm_set_window_buttons_positions( MAC_WM_Window *window )
+mac_wm_set_window_buttons_positions(MAC_WM_Window *window)
 {
   //- yuraiz: do not break anything in fullscreen
-  if ([window->nswindow styleMask] & NSWindowStyleMaskFullScreen)
+  if (window->nswindow.styleMask & NSWindowStyleMaskFullScreen || !window->custom_border)
   {
     return;
   }
@@ -309,7 +473,7 @@ mac_wm_set_window_buttons_positions( MAC_WM_Window *window )
 }
 
 internal WM_Key
-mac_wm_os_key_from_vkey( U32 vkey )
+mac_wm_os_key_from_vkey(U32 vkey)
 {
   local_persist B32 first = 1;
   local_persist WM_Key key_table[512];
@@ -443,7 +607,6 @@ mac_wm_os_key_from_vkey( U32 vkey )
 internal void
 wm_init(void)
 {
-
   //- brt: initialize basics
   Arena *arena = arena_alloc();
   mac_wm_state = push_array(arena, MAC_WM_State, 1);
@@ -456,10 +619,11 @@ wm_init(void)
   @autoreleasepool
   {
     [NSApplication sharedApplication];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
+    NSApp.delegate = [[MAC_WM_NSApplicationDelegate alloc] init];
 
     NSMenu *menu_bar = [[NSMenu alloc] init];
-    [NSApp setMainMenu:menu_bar];
+    NSApp.mainMenu = menu_bar;
 
     NSMenuItem *app_menu_item = [[NSMenuItem alloc] init];
     [menu_bar addItem:app_menu_item];
@@ -472,9 +636,16 @@ wm_init(void)
                                                      keyEquivalent:@"q"];
     [app_menu addItem:quit_menu_item];
 
-    // TODO(yuraiz): Ask Brett why he used finishLaunching here
-    // [NSApp finishLaunching]; 
-    [NSApp activateIgnoringOtherApps:YES];
+    [NSApp finishLaunching];
+
+    //- yuraiz: let NSApp process pending sources
+    for EachIndex(idx, 2)
+    {
+      [NSApp nextEventMatchingMask:NSEventMaskAny
+                                  untilDate:0
+                                      inMode:NSDefaultRunLoopMode
+                                    dequeue:NO];
+    }
   }
 }
 
@@ -544,43 +715,41 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
                              use_default_position ? 0 : pos.y*scale,
                              dim.x*scale,
                              dim.y*scale);
-    NSUInteger mask = NSWindowStyleMaskTitled |
-                      NSWindowStyleMaskClosable |
-                      NSWindowStyleMaskMiniaturizable |
-                      NSWindowStyleMaskFullSizeContentView |
-                      NSWindowStyleMaskResizable;
+
+    NSWindowStyleMask mask = NSWindowStyleMaskTitled |
+                             NSWindowStyleMaskClosable |
+                             NSWindowStyleMaskMiniaturizable |
+                             NSWindowStyleMaskResizable;
+
+    if(flags & WM_WindowFlag_CustomBorder)
+    {
+      mask |= NSWindowStyleMaskFullSizeContentView;
+    }
 
     MAC_WM_NSWindow *ns_window = [[MAC_WM_NSWindow alloc] initWithContentRect:rect
-                                                   styleMask:mask
-                                                     backing:NSBackingStoreBuffered
-                                                       defer:NO];
+                                                          styleMask:mask
+                                                          backing:NSBackingStoreBuffered
+                                                          defer:YES];
     w->nswindow = ns_window;
 
-    NSString *ns_title = mac_wm_nsstring_from_string(title);
-    [ns_window setTitle:ns_title];
-    [ns_window makeKeyAndOrderFront:NULL];
-    [ns_window center];
+    ns_window.title = mac_wm_nsstring_from_string(title);
+    ns_window.contentView = [[MAC_WM_NSView alloc] initWithFrame:ns_window.frame];
+    ns_window.acceptsMouseMovedEvents = YES;
+    ns_window.delegate = ns_window;
+
+    [ns_window registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    [ns_window makeFirstResponder:ns_window.contentView];
 
     //- brt: custom border
     if (flags & WM_WindowFlag_CustomBorder)
     {
-      [ns_window setTitleVisibility:NSWindowTitleHidden];
-      [ns_window setTitlebarAppearsTransparent:YES];
-      [ns_window setMovable:NO];
-      //[ns_window center];
+      ns_window.titleVisibility = NSWindowTitleHidden;
+      ns_window.titlebarAppearsTransparent = YES;
+
       w->custom_border = 1;
       w->paint_arena = arena_alloc();
-// #if 1
-//       [[ns_window standardWindowButton:NSWindowCloseButton] setHidden:YES];
-//       [[ns_window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
-//       [[ns_window standardWindowButton:NSWindowZoomButton] setHidden:YES];
-// #endif
       mac_wm_set_window_buttons_positions(w);
     }
-
-    [ns_window registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
-    ns_window.delegate = ns_window;
-    //[ns_window setAcceptsMouseMovedEvents:YES];
   }
 
   //- brt: convert to handle & return
@@ -593,7 +762,9 @@ wm_window_close(WM_Window handle)
 {
   if(MemoryIsZeroStruct(&handle)) {return;}
   MAC_WM_Window *w = (MAC_WM_Window *)handle.u64[0];
-  [w->nswindow performClose:0];
+  // NOTE(yuraiz): Not performClose: to skip the windowShouldClose:
+  // because it's used to request RD_CMD_WindowClose command, which calls wm_window_close.
+  [w->nswindow close];
   w->nswindow = 0;
 }
 
@@ -612,7 +783,13 @@ wm_window_first_paint(WM_Window handle)
 {
   if(MemoryIsZeroStruct(&handle)) {return;}
   MAC_WM_Window *w = (MAC_WM_Window *)handle.u64[0];
-  w->first_paint_done = 1;
+
+  //- yuraiz: activate the app after the first window
+  if(!NSApp.isActive)
+  {
+    [NSApp activate];
+  }
+
   [w->nswindow makeKeyAndOrderFront:0];
 }
 
@@ -656,12 +833,9 @@ wm_window_set_fullscreen(WM_Window handle, B32 fullscreen)
   NSWindow *ns_window = (__bridge NSWindow *)w->nswindow;
   if (!ns_window) { return; }
 
-  BOOL isCurrentlyFullscreen = (([ns_window styleMask] & NSWindowStyleMaskFullScreen) != 0);
-  if (fullscreen && !isCurrentlyFullscreen)
-  {
-    [ns_window toggleFullScreen:0];
-  }
-  else if (!fullscreen && isCurrentlyFullscreen)
+  NSWindowStyleMask style_mask = ns_window.styleMask;
+  B32 is_fullscreen = (style_mask & NSWindowStyleMaskFullScreen) != 0;
+  if(fullscreen != is_fullscreen)
   {
     [ns_window toggleFullScreen:0];
   }
@@ -733,12 +907,6 @@ wm_window_bring_to_front(WM_Window handle)
   MAC_WM_Window *w = (MAC_WM_Window *)handle.u64[0];
   NSWindow *ns_window = (__bridge NSWindow *)w->nswindow;
   if (!ns_window) { return; }
-
-  // Activate the app if inactive, then bring the window forward
-  if (![NSApp isActive])
-  {
-    [NSApp activateIgnoringOtherApps:YES];
-  }
 
   [ns_window orderFrontRegardless];
 }
@@ -822,13 +990,13 @@ wm_rect_from_window(WM_Window handle)
   MAC_WM_Window *window = mac_wm_window_from_handle(handle);
   if (window)
   {
-    CGFloat scale = window->nswindow.screen.backingScaleFactor;
+    CGFloat scale = window->nswindow.backingScaleFactor;
     NSRect rect_pt = window->nswindow.frame;
-    NSRect rect_px = NSMakeRect(rect_pt.origin.x * scale,
-                                rect_pt.origin.y * scale,
-                                rect_pt.size.width * scale,
-                                rect_pt.size.height * scale);
-    r = mac_wm_rng2f32_from_nsrect(rect_px);
+
+    r.x0 = rect_pt.origin.x * scale;
+    r.x1 = r.x0 + rect_pt.size.width * scale;
+    r.y0 = rect_pt.origin.y * scale;
+    r.y1 = r.y0 + rect_pt.size.height * scale;
   }
   return r;
 }
@@ -840,13 +1008,13 @@ wm_client_rect_from_window(WM_Window handle)
   MAC_WM_Window *window = mac_wm_window_from_handle(handle);
   if (window)
   {
-    CGFloat scale = window->nswindow.screen.backingScaleFactor;
+    CGFloat scale = window->nswindow.backingScaleFactor;
     NSRect rect_pt = window->nswindow.contentView.frame;
-    NSRect rect_px = NSMakeRect(rect_pt.origin.x * scale,
-                                rect_pt.origin.y * scale,
-                                rect_pt.size.width * scale,
-                                rect_pt.size.height * scale);
-    r = mac_wm_rng2f32_from_nsrect(rect_px);
+
+    r.x0 = rect_pt.origin.x * scale;
+    r.x1 = r.x0 + rect_pt.size.width * scale;
+    r.y0 = rect_pt.origin.y * scale;
+    r.y1 = r.y0 + rect_pt.size.height * scale;
   }
   return r;
 }
@@ -860,7 +1028,7 @@ wm_dpi_from_window(WM_Window handle)
   if (nswindow != 0)
   {
     //- brt: map scale factor -> win32 DPI
-    result = nswindow.screen.backingScaleFactor * 96.f;
+    result = nswindow.backingScaleFactor * 96.f;
   }
   return result;
 }
@@ -871,15 +1039,22 @@ wm_dpi_from_window(WM_Window handle)
 internal WM_ExtWindow
 wm_focused_external_window(void)
 {
+  // TODO(yuraiz): verify that it actually works correctly
   WM_ExtWindow result = {0};
-  // TODO(rjf)
+  result.u64[0] = (U64)[[NSWorkspace sharedWorkspace] frontmostApplication];
   return result;
 }
 
 internal void
 wm_focus_external_window(WM_ExtWindow handle)
 {
-  // TODO(rjf)
+  if(handle.u64[0] != 0)
+  {
+    NSRunningApplication *app = (__bridge NSRunningApplication *)handle.u64[0];
+    [app activateWithOptions:
+      NSApplicationActivateIgnoringOtherApps |
+      NSApplicationActivateAllWindows];
+  }
 }
 
 ////////////////////////////////
@@ -976,14 +1151,20 @@ internal F32
 wm_dpi_from_monitor(WM_Monitor monitor)
 {
   // TODO(rjf)
-  return 96.f;
+  F32 result = 96.0;
+  @autoreleasepool
+  {
+    //- brt: map scale factor -> win32 DPI
+    result = NSScreen.screens[0].backingScaleFactor * 96.0;
+  }
+  return result;
 }
 
 ////////////////////////////////
 //~ rjf: @wm_hooks Events (Implemented Per-OS)
 
 internal WM_Event *
-mac_wm_push_event( WM_EventKind kind, MAC_WM_Window *window )
+mac_wm_push_event(WM_EventKind kind, MAC_WM_Window *window)
 {
   WM_Event *result = wm_event_list_push_new(mac_wm_event_arena, &mac_wm_event_list, kind);
   result->window = mac_wm_handle_from_window(window);
@@ -1028,193 +1209,207 @@ wm_send_wakeup_event(void)
   });
 }
 
+internal void
+mac_wm_push_nsevent(NSEvent *ns_event)
+{
+  MAC_WM_Window *window = mac_wm_window_from_nswindow(ns_event.window);
+  B32 press = 0;
+
+  switch (ns_event.type)
+  {
+    case NSEventTypeLeftMouseDown:
+    case NSEventTypeRightMouseDown:
+    case NSEventTypeOtherMouseDown:
+    {
+      press = 1;
+    } // fallthrough
+    case NSEventTypeLeftMouseUp:
+    case NSEventTypeRightMouseUp:
+    case NSEventTypeOtherMouseUp:
+    {
+      WM_Event *event = mac_wm_push_event(press ? WM_EventKind_Press : WM_EventKind_Release, window);
+      switch(ns_event.buttonNumber)
+      {
+        case 0: {event->key = WM_Key_LeftMouseButton;}break;
+        case 1: {event->key = WM_Key_RightMouseButton;}break;
+        case 2: {event->key = WM_Key_MiddleMouseButton;}break;
+      }
+
+      //- yuraiz: "control-click" on macOS, means left mouse button click
+      if(event->key == WM_Key_LeftMouseButton && ns_event.modifierFlags & NSEventModifierFlagControl)
+      {
+        event->key = WM_Key_RightMouseButton;
+        // TODO(yuraiz): Remove that line
+        // the text widget checks for WM_Modifier_Ctrl for "go to definition support"
+        // replace that for WM_Modifier_Cmd when it's supported.
+        event->modifiers =  event->modifiers & (~WM_Modifier_Ctrl);
+      }
+
+      NSPoint pos = ns_event.locationInWindow;
+      F32 scale_factor = ns_event.window.backingScaleFactor;
+      event->pos.x = (F32) pos.x*scale_factor;
+      event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
+
+      //- yuraiz: drag window by the titlebar
+      if (press && event->key == WM_Key_LeftMouseButton)
+      {
+        Vec2F32 pos_client = event->pos;
+        if (window != 0 && pos_client.y < window->custom_border_title_thickness)
+        {
+          B32 is_over_title_bar_client_area = 0;
+          for EachNode(area, MAC_WM_TitleBarClientArea, window->first_title_bar_client_area)
+          {
+            Rng2F32 rect = area->rect;
+            if (rect.x0 <= pos_client.x && pos_client.x < rect.x1 &&
+                rect.y0 <= pos_client.y && pos_client.y < rect.y1)
+            {
+              is_over_title_bar_client_area = 1;
+              break;
+            }
+          }
+
+          if(!is_over_title_bar_client_area)
+          {
+            [window->nswindow performWindowDragWithEvent:ns_event];
+          }
+        }
+      }
+    } break;
+
+    case NSEventTypeKeyDown:
+    {
+      press = 1;
+    } // fallthrough
+    case NSEventTypeKeyUp:
+    {
+      // brt: key down & key up
+      WM_Event *event = mac_wm_push_event(press ? WM_EventKind_Press : WM_EventKind_Release, window);
+      event->key = mac_wm_os_key_from_vkey(ns_event.keyCode);
+      event->is_repeat = ns_event.ARepeat != 0;
+
+      // brt: try text input
+      if (press && ([ns_event modifierFlags] & (NSEventModifierFlagCommand|NSEventModifierFlagControl)) == 0)
+      {
+        NSString *chars = ns_event.characters;
+        NSUInteger length = chars.length;
+        unichar buffer[32];
+        [chars getCharacters:buffer range:NSMakeRange(0, length)];
+        for (NSUInteger idx = 0; idx < length; idx++)
+        {
+          unichar high = buffer[idx];
+          UTF32Char codepoint = 0;
+          // brt: surrogate pair?
+          if (CFStringIsSurrogateHighCharacter(high) &&
+              idx + 1 < length &&
+              CFStringIsSurrogateLowCharacter(buffer[idx + 1]))
+          {
+            unichar low = buffer[idx + 1];
+            codepoint = CFStringGetLongCharacterForSurrogatePair(high, low);
+            idx++;
+          }
+          else
+          {
+            codepoint = high;
+          }
+          if (codepoint >= 32 && codepoint < 127)
+          {
+            WM_Event *event = mac_wm_push_event(WM_EventKind_Text, window);
+            event->character = codepoint;
+          }
+        }
+      }
+    } break;
+
+    case NSEventTypeLeftMouseDragged:
+    case NSEventTypeRightMouseDragged:
+    case NSEventTypeMouseMoved:
+    {
+      WM_Event *event = mac_wm_push_event(WM_EventKind_MouseMove, window);
+      NSPoint pos = ns_event.locationInWindow;
+      F32 scale_factor = ns_event.window.backingScaleFactor;
+      event->pos.x = (F32) pos.x*scale_factor;
+      event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
+    } break;
+
+    case NSEventTypeScrollWheel:
+    {
+      WM_Event *event = mac_wm_push_event(WM_EventKind_Scroll, window);
+      NSPoint pos = ns_event.locationInWindow;
+      F32 scale_factor = ns_event.window.backingScaleFactor;
+      F32 wheel_x = -ns_event.scrollingDeltaX;
+      F32 wheel_y = -ns_event.scrollingDeltaY;
+      if (!ns_event.hasPreciseScrollingDeltas)
+      {
+        wheel_x *= 120.f;
+        wheel_y *= 120.f;
+      }
+      event->pos.x = (F32) pos.x*scale_factor;
+      event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
+      event->delta = v2f32(wheel_x, wheel_y);
+    } break;
+    
+    case NSEventTypeFlagsChanged:
+    {
+      WM_Key key = mac_wm_os_key_from_vkey(ns_event.keyCode);
+      NSEventModifierFlags flags = ns_event.modifierFlags;
+      WM_Modifiers modifiers = 0;
+
+      // TODO(yuraiz): handle command key separately
+      if(flags & (NSEventModifierFlagControl | NSEventModifierFlagCommand))
+      {
+        modifiers |= WM_Modifier_Ctrl;
+        press |= key == WM_Key_Ctrl;
+      }
+      if(flags & NSEventModifierFlagShift)
+      {
+        modifiers |= WM_Modifier_Shift;
+        press |= key == WM_Key_Shift;
+      }
+      if(flags & NSEventModifierFlagOption)
+      {
+        modifiers |= WM_Modifier_Alt;
+        press |= key == WM_Key_Alt;
+      }
+
+      mac_wm_state->modifiers = modifiers;
+
+      WM_Event *event = mac_wm_push_event(press ? WM_EventKind_Press : WM_EventKind_Release, window);
+      event->key = key;
+    }break;
+
+    default:{}break;
+  }
+}
+
 internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
+  //- yuraiz: prepare event collection state
+  mac_wm_state->do_frame = 0;
   mac_wm_event_arena = arena;
   MemoryZeroStruct(&mac_wm_event_list);
 
-  if (!mac_wm_state->in_live_resize) @autoreleasepool
+  // NOTE(yuraiz): Events are propagated down to the "responders",
+  // where they get filtered and handled by the native windows and views.
+  //
+  // Avoid processing unfiltered events in the loop to not conflict with
+  // the window resizing and other native interactions.
+  while(1) @autoreleasepool
   {
     NSDate *deadline = wait ? [NSDate distantFuture] : [NSDate distantPast];
+    wait = 0;
     NSEvent *ns_event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                                           untilDate:deadline
-                                              inMode:NSEventTrackingRunLoopMode
-                                            dequeue:YES];
-    for (;ns_event;)
+                                  untilDate:deadline
+                                      inMode:NSEventTrackingRunLoopMode
+                                    dequeue:YES];
+    
+    [NSApp sendEvent:ns_event];
+    [NSApp updateWindows];
+
+    //- yuraiz: stop if no events or one a frame was requested during the event processing
+    if(ns_event == 0 || mac_wm_state->do_frame)
     {
-      B32 should_send = 1;
-
-      MAC_WM_Window *window = mac_wm_window_from_nswindow(ns_event.window);
-      WM_Window window_handle = mac_wm_handle_from_window(window);
-      B32 release = 0;
-
-      switch (ns_event.type)
-      {
-        //- brt: wakeup event
-        case NSEventTypeApplicationDefined:{}break;
-
-        case NSEventTypeLeftMouseUp:
-        case NSEventTypeRightMouseUp:
-        case NSEventTypeOtherMouseUp:
-        {
-          release = 1;
-        } // fallthrough
-        case NSEventTypeLeftMouseDown:
-        case NSEventTypeRightMouseDown:
-        case NSEventTypeOtherMouseDown:
-        {
-          WM_Event *event = mac_wm_push_event(release ? WM_EventKind_Release : WM_EventKind_Press, window);
-          event->window = window_handle;
-          if (ns_event.type == NSEventTypeLeftMouseDown || ns_event.type == NSEventTypeLeftMouseUp)
-          {
-            event->key = WM_Key_LeftMouseButton;
-          }
-          else if (ns_event.type == NSEventTypeRightMouseDown || ns_event.type == NSEventTypeRightMouseUp)
-          {
-            event->key = WM_Key_RightMouseButton;
-          }
-          else if (ns_event.type == NSEventTypeOtherMouseDown || ns_event.type == NSEventTypeOtherMouseUp)
-          {
-            event->key = WM_Key_MiddleMouseButton;
-          }
-          NSPoint pos = ns_event.locationInWindow;
-          F32 scale_factor = ns_event.window.screen.backingScaleFactor;
-          event->pos.x = (F32) pos.x*scale_factor;
-          event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
-
-          //- yuraiz: drag window by the titlebar
-          if (window != 0)
-          {
-            window->dragging_window = 0;
-          }
-          if (event->key == WM_Key_LeftMouseButton && !release)
-          {
-            Vec2F32 pos_client = event->pos;
-            if (window != 0 && pos_client.y < window->custom_border_title_thickness)
-            {
-              B32 is_over_title_bar_client_area = 0;
-              for (MAC_WM_TitleBarClientArea *area = window->first_title_bar_client_area;
-                   area != 0;
-                   area = area->next)
-              {
-                Rng2F32 rect = area->rect;
-                if (rect.x0 <= pos_client.x && pos_client.x < rect.x1 &&
-                    rect.y0 <= pos_client.y && pos_client.y < rect.y1)
-                {
-                  is_over_title_bar_client_area = 1;
-                  break;
-                }
-              }
-              window->dragging_window = 1;
-            }
-          }
-        } break;
-
-        case NSEventTypeKeyUp:
-        {
-          release = 1;
-        } // fallthrough
-        case NSEventTypeKeyDown:
-        {
-          should_send = 0;
-          // brt: key down & key up
-          {
-            WM_Event *event = mac_wm_push_event(release ? WM_EventKind_Release : WM_EventKind_Press, window);
-            event->window = window_handle;
-            event->key = mac_wm_os_key_from_vkey(ns_event.keyCode);
-            event->is_repeat = ns_event.ARepeat != 0;
-            if(event->key == WM_Key_Alt   && event->modifiers & WM_Modifier_Alt)   { event->modifiers &= ~WM_Modifier_Alt; }
-            if(event->key == WM_Key_Ctrl  && event->modifiers & WM_Modifier_Ctrl)  { event->modifiers &= ~WM_Modifier_Ctrl; }
-            if(event->key == WM_Key_Shift && event->modifiers & WM_Modifier_Shift) { event->modifiers &= ~WM_Modifier_Shift; }
-            //if(event->key == WM_Key_Cmd && event->modifiers & WM_Modifier_Super) { event->modifiers &= ~WM_Modifier_Super; }
-          }
-
-          // brt: try text input
-          if (release == 0 && ([ns_event modifierFlags] & (NSEventModifierFlagCommand|NSEventModifierFlagControl)) == 0)
-          {
-            NSString *chars = ns_event.characters;
-            NSUInteger length = chars.length;
-            unichar buffer[32];
-            [chars getCharacters:buffer range:NSMakeRange(0, length)];
-            for (NSUInteger idx = 0; idx < length; idx++)
-            {
-              unichar high = buffer[idx];
-              UTF32Char codepoint = 0;
-              // brt: surrogate pair?
-              if (CFStringIsSurrogateHighCharacter(high) &&
-                  idx + 1 < length &&
-                  CFStringIsSurrogateLowCharacter(buffer[idx + 1]))
-              {
-                unichar low = buffer[idx + 1];
-                codepoint = CFStringGetLongCharacterForSurrogatePair(high, low);
-                idx++;
-              }
-              else
-              {
-                codepoint = high;
-              }
-              if (codepoint >= 32 && codepoint < 127)
-              {
-                WM_Event *event = mac_wm_push_event(WM_EventKind_Text, window);
-                event->window = window_handle;
-                event->character = codepoint;
-              }
-            }
-          }
-        } break;
-
-        case NSEventTypeLeftMouseDragged:
-        {
-          if(window != 0 && window->dragging_window)
-          {
-            // TODO(yuraiz): Handle events from NSView subclass and start dragging on mouse down event
-            [window->nswindow performWindowDragWithEvent:ns_event];
-          }
-        } // fallthrough
-        case NSEventTypeRightMouseDragged:
-        case NSEventTypeMouseMoved:
-        {
-          WM_Event *event = mac_wm_push_event(WM_EventKind_MouseMove, window);
-          NSPoint pos = ns_event.locationInWindow;
-          F32 scale_factor = ns_event.window.screen.backingScaleFactor;
-          event->pos.x = (F32) pos.x*scale_factor;
-          event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
-        } break;
-
-        case NSEventTypeScrollWheel:
-        {
-          WM_Event *event = mac_wm_push_event(WM_EventKind_Scroll, window);
-          NSPoint pos = ns_event.locationInWindow;
-          F32 scale_factor = ns_event.window.screen.backingScaleFactor;
-          F32 wheel_x = -ns_event.scrollingDeltaX;
-          F32 wheel_y = -ns_event.scrollingDeltaY;
-          if (!ns_event.hasPreciseScrollingDeltas)
-          {
-            wheel_x *= 120.f;
-            wheel_y *= 120.f;
-          }
-          event->pos.x = (F32) pos.x*scale_factor;
-          event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
-          event->delta = v2f32(wheel_x, wheel_y);
-        } break;
-
-        default:
-        {
-          // brt: debug log this?
-          break;
-        }
-      }
-
-      if (should_send)
-      {
-        [NSApp sendEvent:ns_event];
-      }
-
-      ns_event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                                    untilDate:[NSDate distantPast]
-                                       inMode:NSEventTrackingRunLoopMode
-                                      dequeue:YES];
+      break;
     }
   }
 
@@ -1224,22 +1419,7 @@ wm_get_events(Arena *arena, B32 wait)
 internal WM_Modifiers
 wm_get_modifiers(void)
 {
-  WM_Modifiers modifiers = 0;
-  CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
-  if (flags & kCGEventFlagMaskControl)
-    modifiers |= WM_Modifier_Ctrl;
-  if (flags & kCGEventFlagMaskShift)
-    modifiers |= WM_Modifier_Shift;
-  if (flags & kCGEventFlagMaskAlternate)
-    modifiers |= WM_Modifier_Alt;
-  // NOTE(yuraiz): Map cmd to ctrl for now
-  if (flags & kCGEventFlagMaskCommand)
-    modifiers |= WM_Modifier_Ctrl;
-#if 0
-  if (flags & kCGEventFlagMaskCommand)
-    modifiers |= WM_Modifier_Super;
-#endif
-  return modifiers;
+  return mac_wm_state->modifiers;
 }
 
 internal B32
@@ -1276,7 +1456,7 @@ wm_set_cursor(WM_Cursor cursor)
   mac_wm_state->last_set_cursor = cursor;
   switch (cursor)
   {
-    case WM_Cursor_COUNT: break;
+    default:{}break;
     case WM_Cursor_Pointer: nscursor = [NSCursor arrowCursor]; break;
     case WM_Cursor_IBar: nscursor = [NSCursor IBeamCursor]; break;
     case WM_Cursor_LeftRight: nscursor = [NSCursor resizeLeftRightCursor]; break;
@@ -1286,7 +1466,7 @@ wm_set_cursor(WM_Cursor cursor)
     case WM_Cursor_DownRight: nscursor = [NSCursor frameResizeCursorFromPosition:NSCursorFrameResizePositionBottomRight
                                                                   inDirections:NSCursorFrameResizeDirectionsAll]; break;
     case WM_Cursor_UpDownLeftRight: nscursor = [NSCursor openHandCursor]; break;
-    case WM_Cursor_HandPoint: nscursor = [NSCursor openHandCursor]; break;
+    case WM_Cursor_HandPoint: nscursor = [NSCursor pointingHandCursor]; break;
     case WM_Cursor_Disabled: nscursor = [NSCursor operationNotAllowedCursor]; break;
   }
   if (nscursor != 0)
