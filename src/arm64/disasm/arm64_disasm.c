@@ -4,6 +4,71 @@
 #define BINARY_NINJA_ARM64_IMPLEMENTATION
 #include "third_party/binary-ninja-disassembler/arm64.h"
 
+internal ARM64_RegCode
+arm64_reg_code_from_bnd(Register reg)
+{
+  ARM64_RegCode out_code = ARM64_RegCode_nil;
+
+  // regular registers
+  if(reg >= REG_W0 && reg <= REG_WSP)
+  {
+    out_code = reg - REG_W0 + ARM64_RegCode_x0;
+  }
+  else if(reg >= REG_X0 && reg <= REG_X30)
+  {
+    out_code = reg - REG_X0 + ARM64_RegCode_x0;
+  }
+  else if(reg == REG_SP)
+  {
+    out_code = ARM64_RegCode_sp;
+  }
+
+  // vector registers
+  else if(reg >= REG_V0 && reg <= REG_Q31)
+  {
+    U32 reg_index = (reg - REG_V0) % 32;
+    // V, B, H, S, D, 
+    U32 reg_size_index = (reg - REG_V0) / 32;
+    out_code = reg - REG_V0 + ARM64_RegCode_v0;
+  }  
+
+  // B vector
+  else if(reg >= REG_V0_B0 && reg <= REG_V31_B15)
+  {
+    U32 reg_index = (reg - REG_V0_B0) / 16;
+    U32 b_index = (reg - REG_V0_B0) % 16;
+    out_code = reg_index + ARM64_RegCode_v0;
+  }
+
+  // H vector
+  else if(reg >= REG_V0_H0 && reg <= REG_V31_H7)
+  {
+    U32 reg_index = (reg - REG_V0_H0) / 8;
+    U32 h_index = (reg - REG_V0_H0) % 8;
+    out_code = reg_index + ARM64_RegCode_v0;
+  }
+
+  // S vector
+  else if(reg >= REG_V0_S0 && reg <= REG_V31_S3)
+  {
+    U32 reg_index = (reg - REG_V0_S0) / 4;
+    U32 s_index = (reg - REG_V0_S0) % 4;
+    out_code = reg_index + ARM64_RegCode_v0;
+  }
+
+  // D vector
+  else if(reg >= REG_V0_D0 && reg <= REG_V31_D1)
+  {
+    U32 reg_index = (reg - REG_V0_D0) / 2;
+    U32 s_index = (reg - REG_V0_D0) % 2;
+    out_code = reg_index + ARM64_RegCode_v0;
+  }
+
+  // SVE regs aren't supported yet
+
+  return out_code;
+}
+
 internal DASM_Inst
 arm64_dasm_inst_from_code(Arena *arena, U64 vaddr, String8 code, DASM_Syntax syntax)
 {
@@ -19,10 +84,11 @@ arm64_dasm_inst_from_code(Arena *arena, U64 vaddr, String8 code, DASM_Syntax syn
     Instruction instr = {0};
     aarch64_decompose(*(U32*)code.str, &instr, vaddr);
     aarch64_disassemble(&instr, buf, sizeof(buf));
+    String8 result = str8_cstring(buf);
 
     // NOTE(yuraiz): Can be the jump destination, can be just an address
     U64 label_addr = 0;
-    Register regs[4] = {0};
+    Register regs[MAX_OPERANDS * MAX_REGISTERS] = {};
     for EachIndex(i, MAX_OPERANDS)
     {
       if(instr.operands[i].operandClass == LABEL)
@@ -38,7 +104,49 @@ arm64_dasm_inst_from_code(Arena *arena, U64 vaddr, String8 code, DASM_Syntax syn
       }
     }
 
-    if(regs[0] == REG_SP)
+    ARM64_RegCode dst_reg_code = ARM64_RegCode_nil;
+    ARM64_RegCode src_reg_code = ARM64_RegCode_nil;
+    S64 dst_reg_off = 0;
+    S64 src_reg_off = 0;
+
+    //- yuraiz: decode register parameters
+    {
+      ARM64_RegCode reg1 = arm64_reg_code_from_bnd(instr.operands[1].reg[0]);
+      S64 imm1 = instr.operands[1].immediate;
+      ARM64_RegCode reg2 = arm64_reg_code_from_bnd(instr.operands[2].reg[0]);
+      S64 imm2 = instr.operands[2].immediate;
+
+      switch (instr.operation)
+      {
+        default:{}break;
+        case ARM64_LDR:   case ARM64_LDUR:
+        case ARM64_LDRB:  case ARM64_LDRSB:
+        case ARM64_LDRH:  case ARM64_LDRSH:
+        case ARM64_LDRSW:
+        {
+          src_reg_code = reg1;
+          src_reg_off = imm1;
+        }break;
+        case ARM64_STR:   case ARM64_STUR:
+        case ARM64_STRB:  case ARM64_STRH:
+        {
+          dst_reg_code = reg1;
+          dst_reg_off = imm1;
+        }break;
+        case ARM64_LDP:   case ARM64_LDNP:
+        {
+          src_reg_code = reg2;
+          src_reg_off = imm2;
+        }break;
+        case ARM64_STP:   case ARM64_STNP:
+        {
+          dst_reg_code = reg2;
+          dst_reg_off = imm2;
+        }break;
+      }
+    }
+
+    if(regs[0] == REG_SP || regs[1] == REG_SP || regs[2] == REG_SP)
     {
       flags |= DASM_InstFlag_ChangesStackPointer;
       // TODO(yuraiz): That's mostly lying, check for the immediate operand
@@ -163,46 +271,6 @@ arm64_dasm_inst_from_code(Arena *arena, U64 vaddr, String8 code, DASM_Syntax syn
       }
     }
 
-    String8List flag_list = {0};
-    if(flags & DASM_InstFlag_Call) {
-      str8_list_push(arena, &flag_list, str8_lit("call"));
-    }
-    if(flags & DASM_InstFlag_Branch) {
-      str8_list_push(arena, &flag_list, str8_lit("branch"));
-    }
-    if(flags & DASM_InstFlag_UnconditionalJump) {
-      str8_list_push(arena, &flag_list, str8_lit("jump"));
-    }
-    if(flags & DASM_InstFlag_Return) {
-      str8_list_push(arena, &flag_list, str8_lit("ret"));
-    }
-    if(flags & DASM_InstFlag_NonFlow) {
-      str8_list_push(arena, &flag_list, str8_lit("n/f"));
-    }
-    if(flags & DASM_InstFlag_Repeats) {
-      str8_list_push(arena, &flag_list, str8_lit("repeats"));
-    }
-    if(flags & DASM_InstFlag_ChangesStackPointer) {
-      str8_list_push(arena, &flag_list, str8_lit("sp"));
-    }
-    if(flags & DASM_InstFlag_ChangesStackPointerVariably) {
-      str8_list_push(arena, &flag_list, str8_lit("sp/var"));
-    }
-    if(flags & DASM_InstFlag_PushesArm64StackFrame)
-    {
-      str8_list_push(arena, &flag_list, str8_lit("s/frame"));
-    }
-
-    StringJoin flags_join = {0};
-    flags_join.sep = str8_lit(",");
-    String8 flag_string = str8_list_join(arena, &flag_list, &flags_join);
-
-    String8 result = str8_cstring(buf);
-    if (flags != DASM_InstFlag_NonFlow)
-    {
-      result = push_str8f(arena, "%S (flags=%S)", result, flag_string);
-    }
-
     //////////////////////////////
     //- rjf: bundle
     //
@@ -211,10 +279,10 @@ arm64_dasm_inst_from_code(Arena *arena, U64 vaddr, String8 code, DASM_Syntax syn
       inst.size            = sizeof(U32);
       inst.string          = str8_copy(arena, result);
       inst.dst_vaddr       = jump_dest_vaddr;
-      // inst.dst_reg_code    = dst_reg_code;
-      // inst.dst_reg_off     = dst_reg_off;
-      // inst.src_reg_code    = src_reg_code;
-      // inst.src_reg_off     = src_reg_off;
+      inst.dst_reg_code    = dst_reg_code;
+      inst.dst_reg_off     = dst_reg_off;
+      inst.src_reg_code    = src_reg_code;
+      inst.src_reg_off     = src_reg_off;
     }
   }
   
