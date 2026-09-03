@@ -142,6 +142,16 @@ mac_dmn_write_to_protected(
     (mach_msg_type_number_t)size
   );
 
+  // flush from the caches
+  vm_machine_attribute_val_t value = MATTR_VAL_CACHE_FLUSH;
+  mach_vm_machine_attribute(
+      task,
+      region_address,
+      region_size,
+      MATTR_CACHE,
+      &value
+  );
+
   // re-protect the region back to the way it was
   if ((revert_back || executable_protection_modified) &&
       needs_to_change_protection) {
@@ -300,49 +310,52 @@ mac_dmn_thread_write_sp(MAC_DMN_Thread *thread, U64 sp)
 internal B32
 mac_dmn_thread_read_reg_block(MAC_DMN_Thread *thread)
 {
-  switch(thread->process->ctx->arch)
+  if(thread != 0)
   {
-    case Arch_Null: {} break;
-    case Arch_arm64:
+    switch(thread->process->ctx->arch)
     {
-      ARM64_RegBlock *reg_block = thread->reg_block;
-      
-      mach_msg_type_number_t count;
+      case Arch_Null: {} break;
+      case Arch_arm64:
+      {
+        ARM64_RegBlock *reg_block = thread->reg_block;
+        
+        mach_msg_type_number_t count;
 
-      arm_thread_state64_t thread_state = {0};
-      count = ARM_THREAD_STATE64_COUNT;
-      thread_get_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, &count);
-      arm_neon_state64_t neon_state = {0};
-      count = ARM_NEON_STATE64_COUNT;
-      thread_get_state(thread->tid, ARM_NEON_STATE64, (thread_state_t)&neon_state, &count);
-      arm_debug_state64_t debug_state = {0};
-      count = ARM_DEBUG_STATE64_COUNT;
-      thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
-      // TODO(yuraiz): may be useful
-      // arm_exception_state64_v2_t exception_state = {0};
-      // count = ARM_EXCEPTION_STATE64_V2_COUNT;
-      // thread_get_state(thread->tid, ARM_EXCEPTION_STATE64_V2, (thread_state_t)&exception_state, &count);
+        arm_thread_state64_t thread_state = {0};
+        count = ARM_THREAD_STATE64_COUNT;
+        thread_get_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, &count);
+        arm_neon_state64_t neon_state = {0};
+        count = ARM_NEON_STATE64_COUNT;
+        thread_get_state(thread->tid, ARM_NEON_STATE64, (thread_state_t)&neon_state, &count);
+        arm_debug_state64_t debug_state = {0};
+        count = ARM_DEBUG_STATE64_COUNT;
+        thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+        // TODO(yuraiz): may be useful
+        // arm_exception_state64_v2_t exception_state = {0};
+        // count = ARM_EXCEPTION_STATE64_V2_COUNT;
+        // thread_get_state(thread->tid, ARM_EXCEPTION_STATE64_V2, (thread_state_t)&exception_state, &count);
 
-      // NOTE(yuraiz): Some of the registers are omitted in reg_block.
+        // NOTE(yuraiz): Some of the registers are omitted in reg_block.
 
-      MemoryCopy(&reg_block->x0, thread_state.__x, sizeof(thread_state.__x));
-      reg_block->fp = thread_state.__fp;
-      reg_block->lr = thread_state.__lr;
-      reg_block->sp = thread_state.__sp;
-      reg_block->pc = thread_state.__pc;
+        MemoryCopy(&reg_block->x0, thread_state.__x, sizeof(thread_state.__x));
+        reg_block->fp = thread_state.__fp;
+        reg_block->lr = thread_state.__lr;
+        reg_block->sp = thread_state.__sp;
+        reg_block->pc = thread_state.__pc;
 
-      MemoryCopy(&reg_block->v0, neon_state.__v, sizeof(neon_state.__v));
+        MemoryCopy(&reg_block->v0, neon_state.__v, sizeof(neon_state.__v));
 
-      MemoryCopy(&thread->debug_regs, &debug_state, sizeof(debug_state));
-	
-      return true;
-    } break;
-    case Arch_x64:
-    case Arch_x86:
-    case Arch_arm32: { NotImplemented; }break;
-    default: { InvalidPath; } break;
+        MemoryCopy(&thread->debug_regs, &debug_state, sizeof(debug_state));
+    
+        return 1;
+      } break;
+      case Arch_x64:
+      case Arch_x86:
+      case Arch_arm32: { NotImplemented; }break;
+      default: { InvalidPath; } break;
+    }
   }
-  return false;
+  return 0;
 }
 
 internal B32
@@ -385,14 +398,14 @@ mac_dmn_thread_write_reg_block(MAC_DMN_Thread *thread)
       count = ARM_DEBUG_STATE64_COUNT;
       thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
 
-      return true;
+      return 1;
     } break;
     case Arch_x64:
     case Arch_x86:
     case Arch_arm32: { NotImplemented; }break;
     default: { InvalidPath; } break;
   }
-  return false;
+  return 0;
 }
 
 internal U64
@@ -755,7 +768,7 @@ mac_dmn_thread_set_probes(MAC_DMN_Thread *thread)
 
   U64 breakpoint_location = thread->process->ctx->dyld_notifier_address;
 
-  mac_dmn_hardware_breakpoint(thread, 0, breakpoint_location, true, false);
+  mac_dmn_hardware_breakpoint(thread, 0, breakpoint_location, 1, 0);
 
   scratch_end(scratch);
 }
@@ -1369,17 +1382,20 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
     // so I compute it by the offset to the dyld_all_image_infos which I compute from dyld_all_image_infos too.
 
     // disable the breakpoint for a single step
-    thread->clear_single_step = mac_dmn_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, false, true); 
+    thread->clear_single_step = mac_dmn_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, 0, 1); 
     thread->hit_hardware_breakpoint = 1;
 
+    // NOTE(yuraiz): don't actually update the registers
+    ARM64_RegBlock saved_regs = *(ARM64_RegBlock *)thread->reg_block;
     mac_dmn_thread_read_reg_block(thread);
-    ARM64_RegBlock *reg_block = (ARM64_RegBlock *)thread->reg_block;
+    ARM64_RegBlock reg_block = *(ARM64_RegBlock *)thread->reg_block;
+    *((ARM64_RegBlock *)thread->reg_block) = saved_regs;
 
     // read the arguments of dyld_image_notifier.
     // TODO(yuraiz): verify that we get the correct values here
-    enum dyld_image_mode mode = reg_block->x0;
-    U32 info_count = reg_block->x1;
-    U64 info_addr = reg_block->x2;
+    enum dyld_image_mode mode = reg_block.x0;
+    U32 info_count = reg_block.x1;
+    U64 info_addr = reg_block.x2;
 
     mach_vm_size_t read_count = 0;
     struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
@@ -1501,7 +1517,7 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
   else if(thread->hit_hardware_breakpoint)
   {
     // turn the breakpoint back on and disable single step if needed
-    mac_dmn_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, true, !thread->clear_single_step); 
+    mac_dmn_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, 1, !thread->clear_single_step); 
     thread->hit_hardware_breakpoint = 0;
     thread->clear_single_step = 0;
     result = 1;
@@ -2040,14 +2056,6 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         // NOTE(yuraiz): As I understand task_suspend is reliable enough
         if(mac_dmn_state->is_halting)
         {
-          // Update the register cache
-          for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
-          {
-            for EachNode(thread, MAC_DMN_Thread, process->first_thread)
-            {
-              mac_dmn_thread_read_reg_block(thread);
-            }
-          }
           is_halt_done = 1;
           break;
         }
@@ -2120,11 +2128,27 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         }
       }
 
-      // read thread registers
+  
+      MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+
+      // clear the exception if it's our probe and handle the probe
+      if(result.exception == EXC_BREAKPOINT)
       {
-        MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
-        thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
+        if(mac_dmn_event_probe_breakpoint(arena, &events, thread, result.subcode))
+        {
+          result.exception = 0;
+        }
       }
+
+      // // read thread registers
+      // if(result.exception != 0)
+      // {
+      //   MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+      //   if(thread != 0)
+      //   {
+      //     thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
+      //   }
+      // }
 
       if(result.exception == EXC_BREAKPOINT)
       {
@@ -2158,7 +2182,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           e->thread              = mac_dmn_handle_from_thread(thread);
           e->instruction_pointer = mac_dmn_thread_read_ip(thread);
           e->code                = SIGSEGV;
-          e->exception_repeated  = 1;
+          e->exception_repeated  = 0;
           e->address             = result.subcode;
         }
         else
@@ -2199,6 +2223,15 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       {
         // Assert(0 && "failed to restore original instruction bytes");
       }
+    }
+  }
+
+  // update register cache
+  for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
+  {
+    for EachNode(thread, MAC_DMN_Thread, process->first_thread)
+    {
+      thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
     }
   }
   
