@@ -800,6 +800,13 @@ wm_window_focus(WM_Window handle)
   MAC_WM_Window *w = (MAC_WM_Window *)handle.u64[0];
   NSWindow *ns_window = (__bridge NSWindow *)w->nswindow;
   if (!ns_window) { return; }
+  
+  //- yuraiz: the app may be inactive
+  if(!NSApp.isActive)
+  {
+    [NSApp activate];
+  }
+
   [ns_window makeKeyAndOrderFront:0];
 }
 
