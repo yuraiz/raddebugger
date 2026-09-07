@@ -94,6 +94,7 @@ typedef enum WM_EventKind
   WM_EventKind_WindowClose,
   WM_EventKind_FileDrop,
   WM_EventKind_Wakeup,
+  WM_EventKind_Command,
   WM_EventKind_COUNT
 }
 WM_EventKind;
