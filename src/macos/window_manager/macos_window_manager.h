@@ -70,6 +70,7 @@ struct MAC_WM_State
   WM_SystemInfo gfx_info;
   WM_Modifiers modifiers;
   B32 do_frame;
+  B32 menubar_is_final;
 };
 
 ///////////////////////////////////////////////////////////////////////////////

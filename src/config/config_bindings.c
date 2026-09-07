@@ -109,3 +109,22 @@ cfg_key_map_node_ptr_list_from_binding(Arena *arena, CFG_KeyMap *key_map, CFG_Bi
   }
   return list;
 }
+
+internal CFG_Binding
+cfg_first_key_binding_from_name(CFG_KeyMap *key_map, String8 string)
+{
+  CFG_Binding result = {};
+  {
+    U64 hash = d_hash_from_string(string);
+    U64 slot_idx = hash%key_map->name_slots_count;
+    for(CFG_KeyMapNode *n = key_map->name_slots[slot_idx].first; n != 0; n = n->name_hash_next)
+    {
+      if(str8_match(n->name, string, 0))
+      {
+        result = n->binding;
+        break;
+      }
+    }
+  }
+  return result;
+}
