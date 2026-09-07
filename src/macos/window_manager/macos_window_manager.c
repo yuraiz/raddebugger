@@ -377,6 +377,15 @@ nsevent_responder(keyDown);
   return NSTerminateCancel;
 }
 
+- (void)menuItemPressed:(NSMenuItem *)sender
+{
+  NSString *ns_name = (NSString *)sender.representedObject;
+  String8 name = str8_copy(mac_wm_event_arena, str8_cstring(ns_name.UTF8String));
+  WM_Event *event = mac_wm_push_event(WM_EventKind_Command, 0);
+  str8_list_push(mac_wm_event_arena, &event->strings, name);
+  mac_wm_send_dummy_event();
+}
+
 @end
 
 internal NSString *
@@ -615,26 +624,13 @@ wm_init(void)
   mac_wm_state->gfx_info.double_click_time = (F32)[NSEvent doubleClickInterval];
   mac_wm_state->gfx_info.caret_blink_time = 0.5f;
 
-  //- brt: fill out menu bar
+  //- brt: init NSApp
   @autoreleasepool
   {
     [NSApplication sharedApplication];
     NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
     NSApp.delegate = [[MAC_WM_NSApplicationDelegate alloc] init];
-
-    NSMenu *menu_bar = [[NSMenu alloc] init];
-    NSApp.mainMenu = menu_bar;
-
-    NSMenuItem *app_menu_item = [[NSMenuItem alloc] init];
-    [menu_bar addItem:app_menu_item];
-
-    NSMenu *app_menu = [[NSMenu alloc] init];
-    [app_menu_item setSubmenu:app_menu];
-
-    NSMenuItem *quit_menu_item = [[NSMenuItem alloc] initWithTitle:@"Quit "BUILD_TITLE
-                                                            action:@selector(terminate:)
-                                                     keyEquivalent:@"q"];
-    [app_menu addItem:quit_menu_item];
+    NSApp.mainMenu = [[NSMenu alloc] init];
 
     [NSApp finishLaunching];
 
@@ -648,6 +644,222 @@ wm_init(void)
     }
   }
 }
+
+///////////////////////////////////////////////////////////////////////////////
+//~ yuraiz:  @wm_hooks System Menu Bar API
+
+internal WM_Window
+mac_wm_system_menu(String8 name)
+{
+  WM_Window result = {};
+
+  NSMenu *menu_bar = NSApp.mainMenu;
+  NSInteger tag = (NSInteger)u64_hash_from_str8(name);
+  
+  //- yuraiz: search for the menu item
+  NSMenuItem *menu_item = [menu_bar itemWithTag:tag];
+  NSMenu *submenu = 0;
+  if(menu_item != 0)
+  {
+    submenu = menu_item.submenu;
+  }
+
+  //- yuraiz: insert new menu if not found
+  if(submenu == 0)
+  {
+    menu_item = [[NSMenuItem alloc] init];
+    menu_item.tag = tag;
+    [menu_bar addItem:menu_item];
+
+    NSString *title_string = mac_wm_nsstring_from_string(name);
+    submenu = [[NSMenu alloc] initWithTitle:title_string];
+    [menu_item setSubmenu:submenu];
+  }
+
+  result.u64[0] = (U64)submenu;
+
+  return result;
+}
+
+internal WM_Window
+mac_wm_system_menu_submenu(WM_Window menu, String8 display_string)
+{
+  WM_Window result = {};
+
+  if(menu.u64[0] == 0) {return result;}
+  NSMenu *nsmenu = (__bridge NSMenu *)menu.u64[0];
+
+  NSInteger tag = (NSInteger)u64_hash_from_str8(display_string);
+  
+   //- yuraiz: search for the menu item
+  NSMenuItem *menu_item = [nsmenu itemWithTag:tag];
+  NSMenu *submenu = 0;
+  if(menu_item != 0)
+  {
+    submenu = menu_item.submenu;
+  }
+
+  //- yuraiz: insert new menu if not found
+  if(submenu == 0)
+  {
+    NSString *title_string = mac_wm_nsstring_from_string(display_string);
+
+    menu_item = [[NSMenuItem alloc] init];
+    menu_item.tag = tag;
+    menu_item.title = title_string;
+    [nsmenu addItem:menu_item];
+
+    submenu = [[NSMenu alloc] initWithTitle:title_string];
+    [menu_item setSubmenu:submenu];
+  }
+
+  result.u64[0] = (U64)submenu;
+
+  return result;
+}
+
+internal void
+mac_wm_system_menu_option(WM_Window menu, String8 display_string, String8 command, WM_Key key, WM_Modifiers modifiers)
+{
+  if(menu.u64[0] == 0) {return;}
+  NSMenu *nsmenu = (__bridge NSMenu *)menu.u64[0];
+
+  WM_Window result = {};
+
+  NSMenu *menu_bar = NSApp.mainMenu;
+  NSInteger tag = (NSInteger)u64_hash_from_str8(command);
+  
+  //- yuraiz: search for the menu item
+  NSMenuItem *menu_item = [nsmenu itemWithTag:tag];
+
+  //- yuraiz: insert new menu if not found
+  if(menu_item == 0)
+  {
+    NSString *title = mac_wm_nsstring_from_string(display_string);
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:@selector(menuItemPressed:) keyEquivalent:@""];
+    item.enabled = 1;
+    item.representedObject = mac_wm_nsstring_from_string(command);
+    item.tag = tag;
+    [nsmenu addItem:item];
+  }
+
+  NSEventModifierFlags flags = 0;
+  // TODO(yuraiz): Support command key properly here
+  if(modifiers & WM_Modifier_Ctrl)
+  {
+    flags |= NSEventModifierFlagCommand;
+    // flags |= NSEventModifierFlagControl;
+  }
+  if(modifiers & WM_Modifier_Shift)
+  {
+    flags |= NSEventModifierFlagShift;
+  }
+  if(modifiers & WM_Modifier_Alt)
+  {
+    flags |= NSEventModifierFlagOption;
+  }
+
+  NSString *key_equivalent = @"";
+  // NOTE(yuraiz): convert alphanumeric key to lowercase keyequivalent.
+  // keys like "page up" or "backspace" a bit harder to support here.
+  if(key != WM_Key_Null)
+  {
+    String8 key_string = wm_key_display_name_table[key];
+    if(key_string.size == 1)
+    {
+      U8 key_char = key_string.str[0];
+      if((key_char >= 'A' && key_char <= 'Z') || (key_char >= '0' && key_char <= '9'))
+      {
+        key_equivalent = mac_wm_nsstring_from_string(key_string);
+        key_equivalent = key_equivalent.lowercaseString;
+      }
+    }
+  }
+  menu_item.keyEquivalent = key_equivalent;
+  menu_item.keyEquivalentModifierMask = flags;
+}
+
+internal void
+mac_wm_system_menu_separator(WM_Window menu)
+{
+  if(mac_wm_state->menubar_is_final || menu.u64[0] == 0) {return;}
+  NSMenu *nsmenu = (__bridge NSMenu *)menu.u64[0];
+  [nsmenu addItem:[NSMenuItem separatorItem]];
+}
+
+internal void
+mac_wm_finish_app_menu(WM_Window menu, String8 app_name)
+{
+  if(mac_wm_state->menubar_is_final || menu.u64[0] == 0) {return;}
+  NSMenu *nsmenu = (__bridge NSMenu *)menu.u64[0];
+  NSString *nsapp_name = mac_wm_nsstring_from_string(app_name);
+
+  if(nsmenu.numberOfItems > 0)
+  {
+    [nsmenu addItem:[NSMenuItem separatorItem]];
+  }
+
+  NSMenuItem *hide_item = [[NSMenuItem alloc] 
+      initWithTitle:[NSString stringWithFormat:@"Hide %@", nsapp_name]
+      action:@selector(hide:)
+      keyEquivalent:@"h"];
+  [nsmenu addItem:hide_item];
+  
+  NSMenuItem *hide_others_item = [[NSMenuItem alloc] 
+      initWithTitle:@"Hide Others"
+      action:@selector(hideOtherApplications:)
+      keyEquivalent:@"h"];
+  hide_others_item.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+  [nsmenu addItem:hide_others_item];
+  
+  NSMenuItem *show_all_item = [[NSMenuItem alloc] 
+      initWithTitle:@"Show All"
+      action:@selector(unhideAllApplications:)
+      keyEquivalent:@""];
+  [nsmenu addItem:show_all_item];
+  
+  [nsmenu addItem:[NSMenuItem separatorItem]];
+
+  NSMenuItem *quit_menu_item = [[NSMenuItem alloc]
+    initWithTitle:[NSString stringWithFormat:@"Quit %@", nsapp_name]
+           action:@selector(terminate:)
+    keyEquivalent:@"q"];
+  [nsmenu addItem:quit_menu_item];
+}
+
+internal void
+mac_wm_finish_window_menu(WM_Window menu)
+{
+  if(mac_wm_state->menubar_is_final || menu.u64[0] == 0) {return;}
+  NSMenu *nsmenu = (__bridge NSMenu *)menu.u64[0];
+
+  [nsmenu addItemWithTitle:@"Minimize"
+                  action:@selector(performMiniaturize:)
+            keyEquivalent:@"m"];
+
+  [nsmenu addItemWithTitle:@"Zoom"
+                  action:@selector(performZoom:)
+            keyEquivalent:@""];
+  
+  [nsmenu addItem:[NSMenuItem separatorItem]];
+  
+  [nsmenu addItemWithTitle:@"Show All Windows"
+                  action:@selector(arrangeInFront:)
+            keyEquivalent:@""];
+  
+  [nsmenu addItemWithTitle:@"Bring All to Front"
+                  action:@selector(arrangeInFront:)
+            keyEquivalent:@""];
+  
+  NSApp.windowsMenu = nsmenu;
+}
+
+internal void
+mac_wm_finish_menubar(void)
+{
+  mac_wm_state->menubar_is_final = 1;
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //~ brt:  @wm_hooks Graphics System Info (Implemented Per-OS)
