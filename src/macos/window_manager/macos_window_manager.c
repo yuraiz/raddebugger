@@ -384,6 +384,8 @@ nsevent_responder(keyDown);
   WM_Event *event = mac_wm_push_event(WM_EventKind_Command, 0);
   str8_list_push(mac_wm_event_arena, &event->strings, name);
   mac_wm_send_dummy_event();
+  // let the debugger handle the command
+  mac_wm_state->do_frame = 1;
 }
 
 @end
