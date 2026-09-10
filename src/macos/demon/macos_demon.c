@@ -644,6 +644,8 @@ mac_dmn_module_alloc(MAC_DMN_Process *process, U64 load_address, U64 name_vaddr)
   module->size           = mach_compute_image_size(info);
   module->guid           = mach_get_uuid(info);
   
+  module->entry_point_voff = mach_get_entry_point_voffset(info);
+  
   module->unwind_info_range = mach_find_unwind_info(info);
   if(module->unwind_info_range.min != 0)
   {
@@ -1131,7 +1133,7 @@ mac_dmn_push_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Proc
   module_info->vsize = module->size;
 
   // rjf: entry point
-  // module_info->entry_point_voff;
+  module_info->entry_point_voff = module->entry_point_voff;
   
   // TODO(yuraiz): Use more advanced lookup
   String8 debug_info_path =str8f(arena, "%S.dSYM/Contents/Resources/DWARF/%S", path, str8_skip_last_slash(path));
