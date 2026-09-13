@@ -790,7 +790,7 @@ process_launch(ProcessLaunchParams *params)
     Temp scratch = scratch_begin(0, 0);
     if(params->path.size != 0)
     {
-      int chdir_code = posix_spawn_file_actions_addchdir(&file_actions, (char *)push_cstr(scratch.arena, params->path).str);
+      int chdir_code = posix_spawn_file_actions_addchdir_np(&file_actions, (char *)push_cstr(scratch.arena, params->path).str);
       Assert(chdir_code == 0);
     }
     int stdout_code = posix_spawn_file_actions_adddup2(&file_actions, (int)params->stdout_file.u64[0], STDOUT_FILENO);
