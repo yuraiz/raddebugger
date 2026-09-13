@@ -43,6 +43,7 @@ enum COMP_UWND_ARM64InstCategory {
   // ldp fp, lr, [sp], #imm
   COMP_UWND_ARM64InstCategory_frame_pop,
   // TODO(yuraiz): ldp regs, similar to stp
+  // TODO(yuraiz): ldp fp, lr, cam be after add sp, sp
   // add sp, sp, #imm
   COMP_UWND_ARM64InstCategory_add_sp_sp,
   // ret, retab
