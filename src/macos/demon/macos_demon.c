@@ -1737,7 +1737,7 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, ProcessLaunchParams *params)
 
   posix_spawn_file_actions_t actions;
   posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_addchdir(&actions, work_dir_path);
+  posix_spawn_file_actions_addchdir_np(&actions, work_dir_path);
 
 	int spawn_code = posix_spawnp(&pid, argv[0], &actions, &attr, argv, envp);
 
