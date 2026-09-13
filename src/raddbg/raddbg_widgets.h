@@ -172,6 +172,7 @@ internal void rd_cmd_binding_buttons(String8 name, String8 filter, U64 limit, RD
 internal UI_Signal rd_menu_bar_button(String8 string);
 internal UI_Signal rd_cmd_spec_button(String8 name);
 internal void rd_cmd_list_menu_buttons(U64 count, String8 *cmd_names, U32 *fastpath_codepoints);
+internal void rd_cmd_list_mac_menu_buttons(U64 count, String8 *cmd_names, WM_Window menu);
 internal UI_Signal rd_icon_button(RD_IconKind kind, FuzzyMatchRangeList *matches, String8 string);
 internal UI_Signal rd_icon_buttonf(RD_IconKind kind, FuzzyMatchRangeList *matches, char *fmt, ...);
 

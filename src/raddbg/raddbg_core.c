@@ -7432,6 +7432,10 @@ rd_window_frame(void)
                   String8 name = rd_cmd_kind_info_table[RD_CmdKind_UserSettings].string;
                   String8 display_string = rd_display_from_code_name(name);
                   CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
+                  if(rd_state->bind_change_active)
+                  {
+                    binding = (CFG_Binding){};
+                  }
                   mac_wm_system_menu_option(menu, display_string, name, binding.key, binding.modifiers);
                 }
 
@@ -7464,20 +7468,7 @@ rd_window_frame(void)
                 };
 
                 WM_Window menu = mac_wm_system_menu(s("File"));
-                for EachElement(idx, cmds)
-                {
-                  String8 name = cmds[idx];
-                  if(name.size > 0)
-                  {
-                    String8 display_string = rd_display_from_code_name(name);
-                    CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
-                    mac_wm_system_menu_option(menu, display_string, name, binding.key, binding.modifiers);
-                  }
-                  else
-                  {
-                    mac_wm_system_menu_separator(menu);
-                  }
-                }
+                rd_cmd_list_mac_menu_buttons(ArrayCount(cmds), cmds, menu);
               }
 
               {
@@ -7489,20 +7480,7 @@ rd_window_frame(void)
                 };
 
                 WM_Window menu = mac_wm_system_menu(s("View"));
-                for EachElement(idx, cmds)
-                {
-                  String8 name = cmds[idx];
-                  if(name.size > 0)
-                  {
-                    String8 display_string = rd_display_from_code_name(name);
-                    CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
-                    mac_wm_system_menu_option(menu, display_string, name, binding.key, binding.modifiers);
-                  }
-                  else
-                  {
-                    mac_wm_system_menu_separator(menu);
-                  }
-                }
+                rd_cmd_list_mac_menu_buttons(ArrayCount(cmds), cmds, menu);
 
                 {
                   // rjf: tab menu
@@ -7522,20 +7500,7 @@ rd_window_frame(void)
                   };
 
                   WM_Window tab_menu = mac_wm_system_menu_submenu(menu, s("Tab"));
-                  for EachElement(idx, cmds)
-                  {
-                    String8 name = cmds[idx];
-                    if(name.size > 0)
-                    {
-                      String8 display_string = rd_display_from_code_name(name);
-                      CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
-                      mac_wm_system_menu_option(tab_menu, display_string, name, binding.key, binding.modifiers);
-                    }
-                    else
-                    {
-                      mac_wm_system_menu_separator(tab_menu);
-                    }
-                  }
+                  rd_cmd_list_mac_menu_buttons(ArrayCount(cmds), cmds, tab_menu);
                 }
 
                 {
@@ -7558,20 +7523,7 @@ rd_window_frame(void)
                   };
 
                   WM_Window panel_menu = mac_wm_system_menu_submenu(menu, s("Panel"));
-                  for EachElement(idx, cmds)
-                  {
-                    String8 name = cmds[idx];
-                    if(name.size > 0)
-                    {
-                      String8 display_string = rd_display_from_code_name(name);
-                      CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
-                      mac_wm_system_menu_option(panel_menu, display_string, name, binding.key, binding.modifiers);
-                    }
-                    else
-                    {
-                      mac_wm_system_menu_separator(panel_menu);
-                    }
-                  }
+                  rd_cmd_list_mac_menu_buttons(ArrayCount(cmds), cmds, panel_menu);
                 }
               }
 
@@ -7585,20 +7537,7 @@ rd_window_frame(void)
                 };
 
                 WM_Window menu = mac_wm_system_menu(s("Targets"));
-                for EachElement(idx, cmds)
-                {
-                  String8 name = cmds[idx];
-                  if(name.size > 0)
-                  {
-                    String8 display_string = rd_display_from_code_name(name);
-                    CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
-                    mac_wm_system_menu_option(menu, display_string, name, binding.key, binding.modifiers);
-                  }
-                  else
-                  {
-                    mac_wm_system_menu_separator(menu);
-                  }
-                }
+                rd_cmd_list_mac_menu_buttons(ArrayCount(cmds), cmds, menu);
               }
 
               {
@@ -7619,20 +7558,7 @@ rd_window_frame(void)
                 };
 
                 WM_Window menu = mac_wm_system_menu(s("Control"));
-                for EachElement(idx, cmds)
-                {
-                  String8 name = cmds[idx];
-                  if(name.size > 0)
-                  {
-                    String8 display_string = rd_display_from_code_name(name);
-                    CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
-                    mac_wm_system_menu_option(menu, display_string, name, binding.key, binding.modifiers);
-                  }
-                  else
-                  {
-                    mac_wm_system_menu_separator(menu);
-                  }
-                }
+                rd_cmd_list_mac_menu_buttons(ArrayCount(cmds), cmds, menu);
               }
 
               {
@@ -7649,6 +7575,10 @@ rd_window_frame(void)
                   String8 name = rd_cmd_kind_info_table[RD_CmdKind_OpenPalette].string;
                   String8 display_string = s("Show All Commands");
                   CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
+                  if(rd_state->bind_change_active)
+                  {
+                    binding = (CFG_Binding){};
+                  }
                   mac_wm_system_menu_option(menu, display_string, name, binding.key, binding.modifiers);
                 }
               }
