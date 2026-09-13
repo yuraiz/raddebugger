@@ -1065,6 +1065,30 @@ rd_cmd_list_menu_buttons(U64 count, String8 *cmd_names, U32 *fastpath_codepoints
   scratch_end(scratch);
 }
 
+internal void
+rd_cmd_list_mac_menu_buttons(U64 count, String8 *cmd_names, WM_Window menu)
+{
+  for EachIndex(idx, count)
+  {
+    String8 name = cmd_names[idx];
+    if(name.size > 0)
+    {
+      String8 display_string = rd_display_from_code_name(name);
+      CFG_Binding binding = cfg_first_key_binding_from_name(rd_state->key_map, name);
+      //- yuraiz: ignore the binding during the binding change
+      if(rd_state->bind_change_active)
+      {
+        binding = (CFG_Binding){};
+      }
+      mac_wm_system_menu_option(menu, display_string, name, binding.key, binding.modifiers);
+    }
+    else
+    {
+      mac_wm_system_menu_separator(menu);
+    }
+  }
+}
+
 internal UI_Signal
 rd_icon_button(RD_IconKind kind, FuzzyMatchRangeList *matches, String8 string)
 {
