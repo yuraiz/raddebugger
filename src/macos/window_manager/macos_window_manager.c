@@ -279,6 +279,20 @@ nsevent_responder(keyDown);
   }
 }
 
+- (NSTimeInterval)animationResizeTime:(NSRect)newFrame
+{
+  // NOTE(yuraiz): The resize animation isn't particularly pretty
+  // right now, as it blocks the render loop.
+  // speed it up a bit (the default is 0.2).
+  return 12.0 / 60.0; // seconds
+}
+
+- (void)performZoom:(id)sender
+{
+  self.contentView.layerContentsPlacement = NSViewLayerContentsPlacementScaleAxesIndependently;
+  [super performZoom:sender];
+}
+
 - (void)windowWillEnterFullScreen:(NSNotification *)notification
 {
   NSWindow *nswindow = (NSWindow *)notification.object;
@@ -1471,8 +1485,8 @@ mac_wm_push_nsevent(NSEvent *ns_event)
       event->pos.x = (F32) pos.x*scale_factor;
       event->pos.y = (F32) (ns_event.window.contentView.frame.size.height - pos.y)*scale_factor;
 
-      //- yuraiz: drag window by the titlebar
-      if (press && event->key == WM_Key_LeftMouseButton)
+      //- yuraiz: titlebar actions
+      if(event->key == WM_Key_LeftMouseButton)
       {
         Vec2F32 pos_client = event->pos;
         if (window != 0 && pos_client.y < window->custom_border_title_thickness)
@@ -1491,7 +1505,16 @@ mac_wm_push_nsevent(NSEvent *ns_event)
 
           if(!is_over_title_bar_client_area)
           {
-            [window->nswindow performWindowDragWithEvent:ns_event];
+            //- yuraiz: drag window by the titlebar
+            if(press)
+            {
+              [window->nswindow performWindowDragWithEvent:ns_event];
+            }
+            //- yuraiz: maximize on double-click
+            else if(ns_event.clickCount == 2)
+            {
+              [window->nswindow performZoom:0];
+            }
           }
         }
       }
