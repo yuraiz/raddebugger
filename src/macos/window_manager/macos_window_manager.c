@@ -45,6 +45,8 @@
 }
 #endif
 
+#import <objc/runtime.h>
+
 ///////////////////////////////////////////////////////////////////////////////
 //~ brt: Helpers
 
@@ -113,8 +115,8 @@ nsevent_responder(keyDown);
 
 @interface NSWindow (Private)
 
-- (long long)_resizeDirectionForMouseLocation:(CGPoint)location;
-- (void)_resizeWithEvent:(NSEvent *)event;
+- (NSInteger)_resizeDirectionForMouseLocation:(CGPoint)location forTouch:(BOOL)forTouch;
+- (NSInteger)_resizeDirectionForMouseLocation:(CGPoint)location;
 
 @end
 
@@ -126,7 +128,7 @@ nsevent_responder(keyDown);
   //- yuraiz: do incremental window resizing
   if(window->is_resizing)
   {
-    [self _resizeWithEvent:event];
+    [self customResizeWithEvent:event];
   }
 
   //- yuraiz: fall back to the default behavior
@@ -140,7 +142,8 @@ nsevent_responder(keyDown);
 // and only sends update events by calling methods. 
 //
 // Instead, resize incrementally for each event and return from the function.
-- (void)_resizeWithEvent:(NSEvent *)event {
+- (void)customResizeWithEvent:(NSEvent *)event
+{
   MAC_WM_Window *window = mac_wm_window_from_nswindow(self);
 
   //- yuraiz: the first time is called by super sendEvent
@@ -150,7 +153,17 @@ nsevent_responder(keyDown);
     window->is_resizing = 1;
     window->resize_start_rect = self.frame;
     window->resize_start_pos = NSEvent.mouseLocation;
-    window->resize_direction = [self _resizeDirectionForMouseLocation:event.locationInWindow];
+
+    // NOTE(yuraiz): "_resizeDirectionForMouseLocation:" is still available on macOS 27.0,
+    // but IDK if it will in the future releases
+    if ([self respondsToSelector:@selector(_resizeDirectionForMouseLocation:forTouch:)])
+    {
+        window->resize_direction = [self _resizeDirectionForMouseLocation:event.locationInWindow forTouch:NO];
+    }
+    else if ([self respondsToSelector:@selector(_resizeDirectionForMouseLocation:)])
+    {
+        window->resize_direction = [self _resizeDirectionForMouseLocation:event.locationInWindow];
+    }
 
     //- yuraiz: reencode the resize direction
     B32 top = 0;
@@ -277,6 +290,18 @@ nsevent_responder(keyDown);
 
     mac_wm_state->do_frame = 1;
   }
+}
+
+// macos 27 resize method
+- (BOOL)_attemptResizeUsingTrackingLoopWithEvent:(NSEvent *)event
+{
+  [self customResizeWithEvent:event];
+  return YES;
+}
+
+// macOS 26 resize method
+- (void)_resizeWithEvent:(NSEvent *)event {
+  [self customResizeWithEvent:event];
 }
 
 - (NSTimeInterval)animationResizeTime:(NSRect)newFrame
