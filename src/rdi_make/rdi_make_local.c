@@ -13,6 +13,7 @@ rdim_data_model_from_os_arch(OperatingSystem os, RDI_Arch arch)
   Case(Linux,   x86, ILP32);
   Case(Linux,   x64, LLP64);
   Case(Mac,     x64, LP64);
+  Case(Mac,     arm64, LP64);
 #undef Case
   return data_model;
 }
@@ -26,6 +27,7 @@ rdim_make_top_level_info(String8 image_name, Arch arch, U64 exe_hash, RDIM_Binar
   {
     default:{}break;
     case Arch_x64:{arch_rdi = RDI_Arch_X64;}break;
+    case Arch_arm64:{arch_rdi = RDI_Arch_Arm64;}break;
     case Arch_x86:{NotImplemented;}break;
   }
   
