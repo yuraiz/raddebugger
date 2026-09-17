@@ -894,6 +894,11 @@ dw2_reference_info_off_from_form_val(DW2_ParseCtx *ctx, DW2_FormVal *v)
     {
       result = ctx->unit_base_info_off + v->u128.u64[0];
     }break;
+    // TODO(yuraiz): Remove that after Ryan implements it correctly
+    case DW_FormKind_RefAddr:
+    {
+      result = v->u128.u64[0];
+    }break;
     // TODO(rjf): DW_FormKind_RefAddr, DW_FormKind_RefUData, DW_FormKind_RefSig8, DW_FormKind_RefSup8, etc.
   }
   return result;
