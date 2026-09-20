@@ -646,6 +646,7 @@ file_iter_end(FileIter *iter)
 internal B32
 make_directory(String8 path)
 {
+  // TODO(yuraiz): Create nested directories
   Temp scratch = scratch_begin(0, 0);
   B32 result = 0;
   String8 path_copy = push_str8_copy(scratch.arena, path);

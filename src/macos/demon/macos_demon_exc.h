@@ -7,9 +7,6 @@
 ////////////////////////////////
 //~ Includes
 
-#include "generated/mig_server.h"
-#include "generated/mig_client.h"
-
 ////////////////////////////////
 //~ Exceptions
 
@@ -19,6 +16,53 @@ typedef struct MAC_DMN_MachMessage {
     char data[2080];
   };
 } MAC_DMN_MachMessage;
+
+#pragma pack(push, 4)
+typedef struct DMN_MAC_EXC_Request
+{
+	mach_msg_header_t Head;
+	/* start of the kernel processed data */
+	mach_msg_body_t msgh_body;
+	mach_msg_port_descriptor_t thread;
+	mach_msg_port_descriptor_t task;
+	/* end of the kernel processed data */
+	NDR_record_t NDR;
+	exception_type_t exception;
+	mach_msg_type_number_t codeCnt;
+	int64_t code[4];
+} DMN_MAC_EXC_Request;
+#pragma pack(pop)
+
+#pragma pack(push, 4)
+typedef struct DMN_MAC_EXC_RequestStateIdentity
+{
+  mach_msg_header_t Head;
+  /* start of the kernel processed data */
+  mach_msg_body_t msgh_body;
+  mach_msg_port_descriptor_t thread;
+  mach_msg_port_descriptor_t task;
+  /* end of the kernel processed data */
+  NDR_record_t NDR;
+  exception_type_t exception;
+  mach_msg_type_number_t codeCnt;
+  int64_t code[2];
+  int flavor;
+  mach_msg_type_number_t old_stateCnt;
+  natural_t old_state[1296];
+} DMN_MAC_EXC_RequestStateIdentity;
+#pragma pack(pop)
+
+#pragma pack(push, 4)
+typedef struct DMN_MAC_EXC_ReplyStateIdentity
+{
+  mach_msg_header_t Head;
+  NDR_record_t NDR;
+  kern_return_t RetCode;
+  int flavor;
+  mach_msg_type_number_t new_stateCnt;
+  natural_t new_state[1296];
+} DMN_MAC_EXC_ReplyStateIdentity;
+#pragma pack(pop)
 
 typedef struct MAC_DMN_ExceptionResult
 {
@@ -39,6 +83,8 @@ typedef struct MAC_DMN_ExceptionState
 {
   Arena *arena;
   MAC_DMN_ExceptionResult last_result;
+  DMN_MAC_EXC_Request last_request;
+  B32 reply_pending;
 } MAC_DMN_ExceptionState;
 
 ////////////////////////////////
@@ -53,47 +99,11 @@ internal mach_port_t mac_dmn_make_exception_port();
 internal void mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port);
 internal MAC_DMN_ExceptionResult mac_dmn_wait_for_exception(mach_port_t exc_port);
 
-////////////////////////////////
-//~ Mach exception handlers
-
-extern kern_return_t catch_mach_exception_raise(
-  mach_port_t exception_port,
-  mach_port_t thread,
-  mach_port_t task,
-  exception_type_t exception,
-  mach_exception_data_t code,
-  mach_msg_type_number_t code_count
-);
-
-extern kern_return_t catch_mach_exception_raise_state(
-  mach_port_t exception_port,
-  exception_type_t exception,
-  mach_exception_data_t code,
-  mach_msg_type_number_t code_count,
-  int* flavor,
-  thread_state_t in_state,
-  mach_msg_type_number_t in_state_count,
-  thread_state_t out_state,
-  mach_msg_type_number_t* out_state_count
-);
-
-extern kern_return_t catch_mach_exception_raise_state_identity(
-  mach_port_t exception_port,
-  mach_port_t thread,
-  mach_port_t task,
-  exception_type_t exception,
-  mach_exception_data_t code,
-  mach_msg_type_number_t code_count,
-  int* flavor,
-  thread_state_t in_state,
-  mach_msg_type_number_t in_state_count,
-  thread_state_t out_state,
-  mach_msg_type_number_t* out_state_count
-);
+internal mach_msg_return_t mach_exc_recv(mach_port_t rcv_name, DMN_MAC_EXC_Request *request_out, mach_msg_timeout_t timeout_ms);
+internal B32 mach_exc_reply_to(DMN_MAC_EXC_Request request_msg);
 
 mach_msg_return_t
-mach_msg_server_once_with_timeout(
-	boolean_t (*demux)(mach_msg_header_t *, mach_msg_header_t *),
+mach_exc_server_once_with_timeout(
 	mach_msg_size_t max_size,
 	mach_port_t rcv_name,
 	mach_msg_options_t options

@@ -9,6 +9,7 @@
 
 #include <sys/ptrace.h>
 #include <mach/arm/thread_status.h>
+#include <libkern/OSCacheControl.h>
 
 // /Users/yuraiz/Projects/raddebugger/src/macos/demon/demon_os_mac.c:70:12
 #include "macos/demon/macos_demon_exc.h"

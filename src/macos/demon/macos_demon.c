@@ -51,6 +51,34 @@ mac_dmn_try_set_trap(Arena *arena, DMN_Trap *trap)
   return result;
 }
 
+// Execute cache invalidation in remote task via injected thread
+kern_return_t mach_icache_invalidate(mach_port_t task,
+                                        mach_vm_address_t remote_addr,
+                                        mach_vm_size_t size) {
+    // Map the remote memory into current task
+    mach_vm_address_t local_addr = 0;
+    kern_return_t kr = mach_vm_map(mach_task_self(),
+                                      &local_addr,
+                                      size,
+                                      0,  // mask
+                                      VM_FLAGS_ANYWHERE,
+                                      task,
+                                      remote_addr,
+                                      FALSE,  // copy
+                                      VM_PROT_READ | VM_PROT_WRITE,
+                                      VM_PROT_READ | VM_PROT_WRITE,
+                                      VM_INHERIT_NONE);
+    if (kr != KERN_SUCCESS) return kr;
+    
+    // Flush local mapping (affects underlying physical pages)
+    sys_icache_invalidate((void *)local_addr, (size_t)size);
+    
+    // Unmap
+    mach_vm_deallocate(mach_task_self(), local_addr, size);
+    
+    return KERN_SUCCESS;
+}
+
 internal B32
 mac_dmn_write_to_protected(
     const task_t task,
@@ -151,6 +179,29 @@ mac_dmn_write_to_protected(
       MATTR_CACHE,
       &value
   );
+
+  // {
+  //   mach_vm_size_t size_16kb = 16 * 1024;
+  //   mach_vm_address_t page_start = address & ~(size_16kb - 1);
+  //   vm_machine_attribute_val_t value = MATTR_VAL_CACHE_FLUSH;
+  //   kr = mach_icache_invalidate(
+  //       task,
+  //       page_start,
+  //       size_16kb
+  //   );
+  //   printf("cache invalidate %p..%p: %s\n", page_start, page_start + size_16kb, mach_error_string(kr));
+
+
+  // }
+
+  // value = MATTR_VAL_CACHE_FLUSH;
+  // mach_vm_machine_attribute(
+  //     task,
+  //     address,
+  //     size,
+  //     MATTR_CACHE,
+  //     &value
+  // );
 
   // re-protect the region back to the way it was
   if ((revert_back || executable_protection_modified) &&
@@ -261,9 +312,56 @@ mac_dmn_set_single_step_flag(MAC_DMN_Thread *thread, B32 is_on)
     case Arch_arm64:
     {
       // Set SS (Single Stepping) bit
-      if(is_on) { thread->debug_regs.mdscr_el1 |= 0x1;    }
-      else      { thread->debug_regs.mdscr_el1 &= ~(0x1); }
-      thread->is_reg_block_dirty = 1;
+      // if(is_on) { thread->debug_regs.mdscr_el1 |= (U32)0x1;    }
+      // else      { thread->debug_regs.mdscr_el1 &= ~((U32)0x1); }
+      // thread->is_reg_block_dirty = 1;
+
+      mach_msg_type_number_t count;
+      arm_debug_state64_t debug_state = {0};
+      kern_return_t kr = 0;
+
+      count = ARM_DEBUG_STATE64_COUNT;
+      kr = thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+      Assert(kr == 0);
+
+      if(is_on) { debug_state.__mdscr_el1 |= 1ULL;    }
+      else      { debug_state.__mdscr_el1 &= ~(1ULL); }
+
+      count = ARM_DEBUG_STATE64_COUNT;
+      kr = thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
+      Assert(kr == 0);
+
+      // {
+      //   arm_thread_state64_t state;
+      //   mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+        
+      //   kern_return_t kr = thread_get_state(thread->tid, ARM_THREAD_STATE64, 
+      //                                       (thread_state_t)&state, &count);
+      //   if (kr != KERN_SUCCESS) {
+      //     printf("thread_get_state failed: %d\n", kr);
+      //     return 0;
+      //   }
+        
+      //   if(is_on) {
+      //     state.__cpsr |= (1U << 21);   // Set PSTATE.SS bit
+      //     // Also ensure debug mask is clear
+      //     state.__cpsr &= ~(1U << 9);   // Clear PSTATE.D (debug mask)
+      //   } else {
+      //     state.__cpsr &= ~(1U << 21);  // Clear PSTATE.SS
+      //   }
+        
+      //   kr = thread_set_state(thread->tid, ARM_THREAD_STATE64, 
+      //                         (thread_state_t)&state, count);
+      //   if (kr != KERN_SUCCESS) {
+      //     printf("thread_set_state failed: %d\n", kr);
+      //     return 0;
+      //   }
+        
+      //   is_flag_set = 1;
+      //   printf("SS %s via PSTATE (cpsr=0x%x)\n", 
+      //         is_on ? "set" : "cleared", state.__cpsr);
+      // }
+
       is_flag_set = 1;
     } break;
     case Arch_x64:
@@ -327,9 +425,9 @@ mac_dmn_thread_read_reg_block(MAC_DMN_Thread *thread)
         arm_neon_state64_t neon_state = {0};
         count = ARM_NEON_STATE64_COUNT;
         thread_get_state(thread->tid, ARM_NEON_STATE64, (thread_state_t)&neon_state, &count);
-        arm_debug_state64_t debug_state = {0};
-        count = ARM_DEBUG_STATE64_COUNT;
-        thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+        // arm_debug_state64_t debug_state = {0};
+        // count = ARM_DEBUG_STATE64_COUNT;
+        // thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
         // TODO(yuraiz): may be useful
         // arm_exception_state64_v2_t exception_state = {0};
         // count = ARM_EXCEPTION_STATE64_V2_COUNT;
@@ -345,7 +443,7 @@ mac_dmn_thread_read_reg_block(MAC_DMN_Thread *thread)
 
         MemoryCopy(&reg_block->v0, neon_state.__v, sizeof(neon_state.__v));
 
-        MemoryCopy(&thread->debug_regs, &debug_state, sizeof(debug_state));
+        // MemoryCopy(&thread->debug_regs, &debug_state, sizeof(debug_state));
     
         return 1;
       } break;
@@ -378,10 +476,12 @@ mac_dmn_thread_write_reg_block(MAC_DMN_Thread *thread)
       thread_get_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, &count);
       count = ARM_NEON_STATE64_COUNT;
       thread_get_state(thread->tid, ARM_NEON_STATE64, (thread_state_t)&neon_state, &count);
-      count = ARM_DEBUG_STATE64_COUNT;
-      thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+      // count = ARM_DEBUG_STATE64_COUNT;
+      // thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
 
+      U32 cpsr = thread_state.__cpsr;
       MemoryCopy(thread_state.__x, &reg_block->x0, sizeof(thread_state.__x));
+      thread_state.__cpsr = cpsr;
       thread_state.__fp = reg_block->fp;
       thread_state.__lr = reg_block->lr;
       thread_state.__sp = reg_block->sp;
@@ -395,8 +495,8 @@ mac_dmn_thread_write_reg_block(MAC_DMN_Thread *thread)
       thread_set_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, count);
       count = ARM_NEON_STATE64_COUNT;
       thread_set_state(thread->tid, ARM_NEON_STATE64, (thread_state_t)&neon_state, count);
-      count = ARM_DEBUG_STATE64_COUNT;
-      thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
+      // count = ARM_DEBUG_STATE64_COUNT;
+      // thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
 
       return 1;
     } break;
@@ -750,11 +850,11 @@ mac_dmn_hardware_breakpoint(MAC_DMN_Thread *thread, U8 id, U64 address, B32 enab
   // Enable the breakpoint.
   debug_state.__bcr[id] = enable ? 0x1e5 : 0;
 
-  B32 was_single_step = debug_state.__mdscr_el1 & (U32)0x1; 
+  B32 was_single_step = debug_state.__mdscr_el1 & 1ULL; 
 
   // Set SS (Single Stepping) bit
-  if(single_step) { debug_state.__mdscr_el1 |= (U32)0x1;    }
-  else            { debug_state.__mdscr_el1 &= ~((U32)0x1); }
+  if(single_step) { debug_state.__mdscr_el1 |= 1ULL;    }
+  else            { debug_state.__mdscr_el1 &= ~(1ULL); }
 
   count = ARM_DEBUG_STATE64_COUNT;
   thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
@@ -1828,7 +1928,11 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         {
           // skip hardware breakpoints
           DMN_Trap *trap = n->v+n_idx;
-          if(trap->flags) { continue; }
+          if(trap->flags)
+          { 
+            printf("trap with flags\n");
+            continue;
+          }
           
           HashTable *active_trap_ht = hash_table_search_u64_raw(process_ht, trap->process.u64[0]);
           if(active_trap_ht == 0)
@@ -1870,13 +1974,19 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       MAC_DMN_Thread *single_step_thread = mac_dmn_thread_from_handle(ctrls->single_step_thread);
       if(single_step_thread)
       {
-        mac_dmn_set_single_step_flag(single_step_thread, 1);
+        B32 ok_single_step = mac_dmn_set_single_step_flag(single_step_thread, 1);
+        if(!ok_single_step)
+        {
+          printf("Failed to set single step %p\n", single_step_thread);
+        }
       }
       else
       {
         Assert(0 && "invalid single_step_thread handle");
       }
     }
+
+    thread_t dbg_ss_thread = 0;
     
     // schedule threads to run
     MAC_DMN_ThreadPtrList running_threads = {0};
@@ -1905,6 +2015,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           // rjf: not single-stepping? determine based on run controls freezing info
           if(dmn_handle_match(dmn_handle_zero(), ctrls->single_step_thread))
           {
+            // printf("traps I guess\n");
             if(ctrls->run_entities_are_processes)
             {
               is_frozen = process_is_frozen;
@@ -1928,7 +2039,17 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           // rjf: single-step? freeze if not the single-step thread.
           else
           {
+            // printf("ss I guess\n");
+
             is_frozen = !dmn_handle_match(mac_dmn_handle_from_thread(thread), ctrls->single_step_thread);
+          }
+
+          B32 task_was_frozen = 0;
+          {
+            struct task_basic_info info;
+            mach_msg_type_number_t info_cnt = TASK_BASIC_INFO_COUNT;
+            task_info(process->task, TASK_BASIC_INFO, (task_info_t)&info, &info_cnt);
+            task_was_frozen = info.suspend_count > 0;
           }
           
           struct thread_basic_info info;
@@ -1948,6 +2069,10 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
               if(thread->is_reg_block_dirty)
               {
                 thread->is_reg_block_dirty = !mac_dmn_thread_write_reg_block(thread);
+              }
+
+              {
+                running_threads.count += 1;
               }
               
               // TODO(yuraiz): I'm not sure that actually needs implementation.
@@ -1980,6 +2105,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
 
         if(!process_is_frozen)
         {
+          // TODO(yuraiz): I think it may be not necessary to resume it every time
           task_resume(process->task);
         }
       }
@@ -2002,6 +2128,15 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         result = mac_dmn_wait_for_exception(mac_dmn_state->exc_port);
         mutex_take(mac_dmn_state->halter_mutex);
       }
+      // printf("got result\n");
+      // if(dbg_ss_thread != 0)
+      // {
+      //   mach_msg_type_number_t count = 0;
+      //   arm_debug_state64_t debug_state = {0};
+      //   count = ARM_DEBUG_STATE64_COUNT;
+      //   kern_return_t kr = thread_get_state(dbg_ss_thread, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+      //   printf("get ss thread: %s\n", mach_error_string(kr));
+      // }
 
       for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
       {
@@ -2052,6 +2187,30 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
         }
       }
+
+      running_threads.count = 0;
+      {
+        for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
+        {
+          struct task_basic_info info;
+          mach_msg_type_number_t info_cnt = TASK_BASIC_INFO_COUNT;
+          kern_return_t status_code = task_info(process->task, TASK_BASIC_INFO, (thread_info_t)&info, &info_cnt);
+          if(info.suspend_count == 0)
+          {
+            for EachNode(thread, MAC_DMN_Thread, process->first_thread)
+            {
+              struct thread_basic_info info;
+              mach_msg_type_number_t info_cnt = THREAD_BASIC_INFO_COUNT;
+              kern_return_t status_code = thread_info(thread->tid, THREAD_BASIC_INFO, (thread_info_t)&info, &info_cnt);
+              //- yuraiz: when the task is killed, the port becomes invalid.
+              if(status_code == 0)
+              {
+                running_threads.count += info.suspend_count == 0;
+              }
+            }
+          }
+        }
+      }
       
       if(result.timed_out)
       {
@@ -2061,7 +2220,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           is_halt_done = 1;
           break;
         }
-
+        // printf("timed out\n");
         continue;
       }
 
@@ -2155,6 +2314,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       if(result.exception == EXC_BREAKPOINT)
       {
         MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+        mac_dmn_thread_read_reg_block(thread);
         if(!mac_dmn_event_probe_breakpoint(arena, &events, thread, result.subcode))
         {
           // TODO(yuraiz): handle different types of breakpoints
@@ -2198,7 +2358,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         mac_dmn_event_exception(arena, &events, result.thread, result.subcode);
         break;
       }
-    // TODO(yuraiz): Fix running threads info
+      // TODO(yuraiz): Fix running threads info
     } while(running_threads.count > 0 || mac_dmn_state->process_pending_creation > 0 || mac_dmn_state->threads_pending_creation > 0);
     
     // finalize halter state
@@ -2214,6 +2374,16 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       mac_dmn_state->is_halting     = 0;
     }
     
+    // debug print traps
+    // printf("begin traps:\n");
+    // for EachNode(active_trap, MAC_DMN_ActiveTrap, active_trap_first)
+    // {
+    //   // skip process that exited during the wait
+    //   MAC_DMN_Process *process = mac_dmn_process_from_handle(active_trap->trap->process);
+    //   printf("trap: %p (process %p)\n", active_trap->trap->vaddr, process);
+    // }
+    // printf("end traps\n");
+
     // restore original instruction bytes
     for EachNode(active_trap, MAC_DMN_ActiveTrap, active_trap_first)
     {
