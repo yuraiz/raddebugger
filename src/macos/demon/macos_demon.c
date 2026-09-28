@@ -224,6 +224,17 @@ mac_dmn_process_update_dyld_notifier_addr(MAC_DMN_Process *process)
 
   //- yuraiz: apply the offset to all image info
   process->ctx->dyld_notifier_address = IntFromPtr(info.all_image_info_addr) + notification_offset;
+
+  //- yuraiz: write the trap to the new address and store the instruction
+  {
+    ARCH_Info *arch_info = arch_info_from_arch(Arch_CURRENT);
+    U64 bytes_per_trap = arch_info->trap_instruction.size;
+    U64 vaddr = process->ctx->dyld_notifier_address;
+    DMN_Handle process_handle = mac_dmn_handle_from_process(process);
+    dmn_process_read(process_handle, r1u64(vaddr, vaddr + bytes_per_trap), process->ctx->dyld_trap_bytes);
+    dmn_process_write(process_handle, r1u64(vaddr, vaddr + bytes_per_trap), arch_info->trap_instruction.str);
+  }
+  // TODO(yuraiz): restore the instruction on detach
 }
 
 internal B32
@@ -726,43 +737,6 @@ mac_dmn_process_ctx_alloc(MAC_DMN_Process *process, B32 is_rebased)
   return ctx;
 }
 
-internal B32
-mac_dmn_hardware_breakpoint(MAC_DMN_Thread *thread, U8 id, U64 address, B32 enable, B32 single_step)
-{
-  mach_msg_type_number_t count;
-  arm_debug_state64_t debug_state = {0};
-  count = ARM_DEBUG_STATE64_COUNT;
-  thread_get_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
-
-  // Set the breakpoint address.
-  debug_state.__bvr[id] = address;
-  // Enable the breakpoint.
-  debug_state.__bcr[id] = enable ? 0x1e5 : 0;
-
-  B32 was_single_step = debug_state.__mdscr_el1 & (U32)0x1; 
-
-  // Set SS (Single Stepping) bit
-  if(single_step) { debug_state.__mdscr_el1 |= (U32)0x1;    }
-  else            { debug_state.__mdscr_el1 &= ~((U32)0x1); }
-
-  count = ARM_DEBUG_STATE64_COUNT;
-  thread_set_state(thread->tid, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, count);
-
-  return !was_single_step && single_step;
-}
-
-internal void
-mac_dmn_thread_set_probes(MAC_DMN_Thread *thread)
-{
-  // NOTE(yuraiz): Currently we set only a singe trap.
-  Temp scratch = scratch_begin(0, 0);
-
-  U64 breakpoint_location = thread->process->ctx->dyld_notifier_address;
-
-  mac_dmn_hardware_breakpoint(thread, 0, breakpoint_location, 1, 0);
-
-  scratch_end(scratch);
-}
 
 internal MAC_DMN_Thread *
 mac_dmn_thread_alloc(MAC_DMN_Process *process, MAC_DMN_ThreadState thread_state, thread_act_t tid)
@@ -786,8 +760,6 @@ mac_dmn_thread_alloc(MAC_DMN_Process *process, MAC_DMN_ThreadState thread_state,
   thread->state     = thread_state;
   thread->process   = process;
   thread->reg_block = reg_block;
-
-  mac_dmn_thread_set_probes(thread);
 
   // NOTE(yuraiz): It's safe to read the registers even if the thread isn't suspended.
   thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
@@ -1372,21 +1344,24 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
     // You can find it in the dyld_all_image_infos.notifier field, but it isn't valid just after the start,
     // so I compute it by the offset to the dyld_all_image_infos which I compute from dyld_all_image_infos too.
 
-    // disable the breakpoint for a single step
-    thread->clear_single_step = mac_dmn_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, 0, 1); 
-    thread->hit_hardware_breakpoint = 1;
+    enum dyld_image_mode mode = 0;
+    U32 info_count = 0;
+    U64 info_addr = 0;
+    {
+      arm_thread_state64_t regs = {0};
+      mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+      thread_get_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&regs, &count);
 
-    // NOTE(yuraiz): don't actually update the registers
-    ARM64_RegBlock saved_regs = *(ARM64_RegBlock *)thread->reg_block;
-    mac_dmn_thread_read_reg_block(thread);
-    ARM64_RegBlock reg_block = *(ARM64_RegBlock *)thread->reg_block;
-    *((ARM64_RegBlock *)thread->reg_block) = saved_regs;
+      // unpack the arguments of dyld_image_notifier
+      mode = regs.__x[0];
+      info_count = regs.__x[1];
+      info_addr = regs.__x[2];
 
-    // read the arguments of dyld_image_notifier.
-    // TODO(yuraiz): verify that we get the correct values here
-    enum dyld_image_mode mode = reg_block.x0;
-    U32 info_count = reg_block.x1;
-    U64 info_addr = reg_block.x2;
+      // emulate 'ret'
+      regs.__pc = regs.__lr;
+
+      thread_set_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&regs, count);
+    }
 
     mach_vm_size_t read_count = 0;
     struct dyld_image_info *image_info_array = push_array(arena, struct dyld_image_info, info_count);
@@ -1498,19 +1473,11 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
         }
 
         // NOTE(yuraiz): the debugger expects the first module to be the main one,
-        // so postpond notifying about dyld until the actual main module is loaded.
+        // so postpone notifying about dyld until the actual main module is loaded.
         process->dyld_move_vaddr = (U64)image_info_array[0].imageLoadAddress;
         process->dyld_name_vaddr = (U64)image_info_array[0].imageFilePath;
       }break;
     }
-    result = 1;
-  }
-  else if(thread->hit_hardware_breakpoint)
-  {
-    // turn the breakpoint back on and disable single step if needed
-    mac_dmn_hardware_breakpoint(thread, 0, process->ctx->dyld_notifier_address, 1, !thread->clear_single_step); 
-    thread->hit_hardware_breakpoint = 0;
-    thread->clear_single_step = 0;
     result = 1;
   }
 
@@ -1799,7 +1766,9 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
     //- rjf: read initial bytes at all trap locations
     //
     U64 bytes_per_trap = arch_info->trap_instruction.size;
-    U8 *trap_swap_bytes = push_array(scratch.arena, U8, ctrls->traps.trap_count * bytes_per_trap);
+    U64 probe_count = 1;
+    U64 total_trap_count = ctrls->traps.trap_count + probe_count;
+    U8 *trap_swap_bytes = push_array(scratch.arena, U8, total_trap_count * bytes_per_trap);
     {
       U64 trap_idx = 0;
       for EachNode(n, DMN_TrapChunkNode, ctrls->traps.first)
@@ -1815,7 +1784,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         }
       }
     }
-    
+
     ////////////////////////////
     //- rjf: write all trap instructions
     //
@@ -1832,7 +1801,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         }
       }
     }
-    
+
     ////////////////////////////
     //- rjf: enable single stepping
     //
