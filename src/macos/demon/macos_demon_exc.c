@@ -5,9 +5,41 @@
 //~ Includes
 
 #include "generated/mig_server.c"
-#undef msgh_request_port
-#undef msgh_reply_port
-#include "generated/mig_client.c"
+
+////////////////////////////////
+//~ Mach Exceptions
+
+internal mach_msg_return_t
+mach_msg_recv(
+  MAC_DMN_MachMessage *msg,
+  mach_port_t rcv_name,
+  mach_msg_options_t options,
+  mach_msg_timeout_t timeout)
+{
+  return mach_msg(
+    &msg->hdr,
+    options | MACH_RCV_MSG,
+    0,
+    sizeof(*msg),
+    rcv_name,
+    timeout,
+    MACH_PORT_NULL
+  );
+}
+
+internal mach_msg_return_t
+mach_msg_send_reply(MAC_DMN_MachMessage *msg)
+{
+  return mach_msg(
+    &msg->hdr,
+    MACH_SEND_MSG | MACH_SEND_INTERRUPT,
+    msg->hdr.msgh_size,
+    0,
+    MACH_PORT_NULL,
+    MACH_MSG_TIMEOUT_NONE,
+    MACH_PORT_NULL
+  );
+}
 
 ////////////////////////////////
 //~ Mach Exceptions
@@ -42,10 +74,10 @@ mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port)
 {
   kern_return_t status_code = task_set_exception_ports(
     task,
-    EXC_MASK_ALL,
+    EXC_MASK_ALL | EXC_MASK_CRASH | EXC_MASK_CORPSE_NOTIFY,
     exc_port,
     EXCEPTION_DEFAULT | MACH_EXCEPTION_MASK,
-    MACHINE_THREAD_STATE
+    THREAD_STATE_NONE
   );
 
   if(status_code != 0)
@@ -55,13 +87,74 @@ mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port)
   }
 }
 
+internal B32
+mac_dmn_reply_to_pending_exceptions_for_task(task_t task)
+{
+  B32 should_resume = 0;
+
+  pid_t target_pid;
+  pid_for_task(task, &target_pid);
+  
+  for EachNode(exception, MAC_DMN_ExceptionResult, mac_dmn_exception_state->first_exception)
+  {
+    // total_exc++;
+    if(exception->task == task)
+    {
+      //- yuraiz: handle UNIX soft signal
+      if (exception->exception == EXC_SOFTWARE && exception->code == EXC_SOFT_SIGNAL) {
+        ptrace(PT_THUPDATE,
+                target_pid,
+                (caddr_t)(uintptr_t)exception->thread,
+                exception->subcode);
+      }
+
+      ptrace(PT_CONTINUE, target_pid, (caddr_t)1, 0);
+
+      kern_return_t reply_kr = mach_msg_send_reply(&exception->reply);
+      Assert(reply_kr == 0);
+
+      DLLRemove(mac_dmn_exception_state->first_exception, mac_dmn_exception_state->last_exception, exception);
+      SLLStackPush(mac_dmn_exception_state->free_exception, exception);
+
+      should_resume = 1;
+    }
+  }
+
+  return should_resume;
+}
+
 internal MAC_DMN_ExceptionResult
 mac_dmn_wait_for_exception(mach_port_t exc_port)
 {
-  const mach_msg_size_t msg_size = 2048;
-  kern_return_t status_code = mach_msg_server_once_with_timeout(
-    mach_exc_server, msg_size, exc_port, 0
-  );
+  kern_return_t status_code = 0;
+
+  {
+    mach_msg_timeout_t timeout_ms = 17;
+
+    MAC_DMN_MachMessage request = {};
+    MAC_DMN_MachMessage reply = {};
+    status_code = mach_msg_recv(&request, exc_port, MACH_RCV_INTERRUPT | MACH_RCV_TIMEOUT, timeout_ms);
+
+    if (status_code == MACH_MSG_SUCCESS)
+    {
+      mach_exc_server(&request.hdr, &reply.hdr);
+      mac_dmn_exception_state->last_exception->reply = reply;
+    }
+
+    while(1)
+    {
+      if (mach_msg_recv(&request, exc_port, MACH_RCV_INTERRUPT | MACH_RCV_TIMEOUT, 0) == MACH_MSG_SUCCESS)
+      {
+        Assert(0 && "bulk messages aren't handled yet");
+        mach_exc_server(&request.hdr, &reply.hdr);
+        mac_dmn_exception_state->last_exception->reply = reply;
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
 
   if(status_code == MACH_RCV_TIMED_OUT)
   {
@@ -74,7 +167,7 @@ mac_dmn_wait_for_exception(mach_port_t exc_port)
     fprintf(stderr, "mach_msg_server_once returned error: %x %s\n", status_code, mach_error_string(status_code));
   }
 
-  MAC_DMN_ExceptionResult result = mac_dmn_exception_state->last_result;
+  MAC_DMN_ExceptionResult result = *mac_dmn_exception_state->last_exception;
   return result;
 }
 
@@ -120,43 +213,59 @@ catch_mach_exception_raise(
   mach_msg_type_number_t code_count
 )
 {
-  MAC_DMN_ExceptionResult result = {0};
-  result.exception_port = exception_port;
-  result.thread = thread;
-  result.task = task;
-  result.exception = exception;
-	if(code_count > 0) { result.code = code[0]; }
-	if(code_count > 1) { result.subcode = code[1]; }
-	if(code_count > 2) { result.subsubcode = code[2]; }
+  if(mac_dmn_exception_state->first_exception == 0)
+  {
+    task_suspend(task);
+  }
 
-	if (exception == EXC_BREAKPOINT) {
-		// skip printing
-	} else if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL) {
-		// handling UNIX soft signal
-	
-		printf("Got exception %s (code: EXC_SOFT_SIGNAL subcode: %s)\n",
-			exc_type_to_string(result.exception), 
-			strsignal(result.subcode)
-		);
+  if(exception == EXC_BREAKPOINT && code[0] == 1 && code[1] == 0)
+  {
+    mach_msg_type_number_t count = ARM_DEBUG_STATE64_COUNT;
+    arm_debug_state64_t debug_state = {0};
+    thread_get_state(thread, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, &count);
+    debug_state.__mdscr_el1 = 0;
+    thread_set_state(thread, ARM_DEBUG_STATE64, (thread_state_t)&debug_state, ARM_DEBUG_STATE64_COUNT);
+  }
 
-		pid_t target_pid;
-		pid_for_task(task, &target_pid);
-		ptrace(PT_THUPDATE,
-						target_pid,
-						(caddr_t)(uintptr_t)thread,
-						code[2]);
-	} else {
-		printf("Got exception %s (code: %llu, subcode: %p, subsubcode: %p)\n",
-			exc_type_to_string(result.exception), 
-			result.code,
-			result.subcode,
-			result.subsubcode
-		);
-	}
+  // MAC_DMN_ExceptionResult result = {0};
+  MAC_DMN_ExceptionResult *result = mac_dmn_exception_state->free_exception;
+  if(result)
+  {
+    SLLStackPop(mac_dmn_exception_state->free_exception);
+  }
+  else
+  {
+    result = push_array(mac_dmn_exception_state->arena, MAC_DMN_ExceptionResult, 1);
+  }
 
-  task_suspend(task);
+  DLLPushBack(mac_dmn_exception_state->first_exception, mac_dmn_exception_state->last_exception, result);
 
-  mac_dmn_exception_state->last_result = result;
+  result->exception_port = exception_port;
+  result->thread = thread;
+  result->task = task;
+  result->exception = exception;
+  if(code_count > 0) { result->code = code[0]; }
+  if(code_count > 1) { result->subcode = code[1]; }
+
+  if (exception == EXC_BREAKPOINT)
+  {
+    // skip printing
+  }
+  else if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL)
+  {
+    printf("Got exception %s (code: EXC_SOFT_SIGNAL subcode: %s)\n",
+      exc_type_to_string(result->exception), 
+      strsignal(result->subcode)
+    );
+  }
+  else
+  {
+    printf("Got exception %s (code: %llu, subcode: %p)\n",
+      exc_type_to_string(result->exception), 
+      result->code,
+      result->subcode
+    );
+  }
 
   return KERN_SUCCESS;
 }
@@ -176,7 +285,7 @@ catch_mach_exception_raise_state(
   mach_msg_type_number_t* out_state_count
 )
 {
-  fprintf(stderr, "this handler should not be called\n");
+  Assert(0 && "this handler should not be called\n");
   return MACH_RCV_INVALID_TYPE;
 }
 
@@ -195,188 +304,6 @@ catch_mach_exception_raise_state_identity(
   mach_msg_type_number_t* out_state_count
 )
 {
-  fprintf(stderr, "this handler should not be called\n");
+  Assert(0 && "this handler should not be called\n");
   return MACH_RCV_INVALID_TYPE;
-}
-
-// Edited message server
-
-static inline boolean_t
-mach_msg_server_is_recoverable_send_error(kern_return_t kr)
-{
-	switch (kr) {
-	case MACH_SEND_INVALID_DEST:
-	case MACH_SEND_TIMED_OUT:
-	case MACH_SEND_INTERRUPTED:
-		return TRUE;
-	default:
-		/*
-		 * Other errors mean that the message may have been partially destroyed
-		 * by the kernel, and these can't be recovered and may leak resources.
-		 */
-		return FALSE;
-	}
-}
-
-static kern_return_t
-mach_msg_server_mig_return_code(mig_reply_error_t *reply)
-{
-	/*
-	 * If the message is complex, it is assumed that the reply was successful,
-	 * as the RetCode is where the count of out of line descriptors is.
-	 *
-	 * If not, we read RetCode.
-	 */
-	if (reply->Head.msgh_bits & MACH_MSGH_BITS_COMPLEX) {
-		return KERN_SUCCESS;
-	}
-	return reply->RetCode;
-}
-
-static void
-mach_msg_server_consume_unsent_message(mach_msg_header_t *hdr)
-{
-	/* mach_msg_destroy doesn't handle the local port */
-	mach_port_t port = hdr->msgh_local_port;
-	if (MACH_PORT_VALID(port)) {
-		switch (MACH_MSGH_BITS_LOCAL(hdr->msgh_bits)) {
-		case MACH_MSG_TYPE_MOVE_SEND:
-		case MACH_MSG_TYPE_MOVE_SEND_ONCE:
-			/* destroy the send/send-once right */
-			(void) mach_port_deallocate(mach_task_self_, port);
-			hdr->msgh_local_port = MACH_PORT_NULL;
-			break;
-		}
-	}
-	mach_msg_destroy(hdr);
-}
-
-mach_msg_return_t
-mach_msg_server_once_with_timeout(
-	boolean_t (*demux)(mach_msg_header_t *, mach_msg_header_t *),
-	mach_msg_size_t max_size,
-	mach_port_t rcv_name,
-	mach_msg_options_t options)
-{
-  mach_msg_timeout_t timeout = 17; // ms I guess
-
-	mig_reply_error_t *bufRequest, *bufReply;
-	mach_msg_size_t request_size;
-	mach_msg_size_t request_alloc;
-	mach_msg_size_t trailer_alloc;
-	mach_msg_size_t reply_alloc;
-	mach_msg_return_t mr;
-	kern_return_t kr;
-	mach_port_t self = mach_task_self_;
-	voucher_mach_msg_state_t old_state = VOUCHER_MACH_MSG_STATE_UNCHANGED;
-
-	options &= ~(MACH_SEND_MSG | MACH_RCV_MSG | MACH_RCV_VOUCHER);
-
-	trailer_alloc = REQUESTED_TRAILER_SIZE(options);
-	request_alloc = (mach_msg_size_t)round_page(max_size + trailer_alloc);
-
-
-	request_size = (options & MACH_RCV_LARGE) ?
-	    request_alloc : max_size + trailer_alloc;
-
-	reply_alloc = (mach_msg_size_t)round_page((options & MACH_SEND_TRAILER) ?
-	    (max_size + MAX_TRAILER_SIZE) :
-	    max_size);
-
-  // printf("request alloc: %d, rep: %d\n", request_alloc, reply_alloc);
-
-	kr = vm_allocate(self,
-	    (vm_address_t *)&bufReply,
-	    reply_alloc,
-	    VM_MAKE_TAG(VM_MEMORY_MACH_MSG) | TRUE);
-	if (kr != KERN_SUCCESS) {
-		return kr;
-	}
-
-	for (;;) {
-		mach_msg_size_t new_request_alloc;
-
-		kr = vm_allocate(self,
-		    (vm_address_t *)&bufRequest,
-		    request_alloc,
-		    VM_MAKE_TAG(VM_MEMORY_MACH_MSG) | TRUE);
-		if (kr != KERN_SUCCESS) {
-			vm_deallocate(self,
-			    (vm_address_t)bufReply,
-			    reply_alloc);
-			return kr;
-		}
-
-		mr = mach_msg(&bufRequest->Head, MACH_RCV_TIMEOUT | MACH_RCV_MSG | MACH_RCV_VOUCHER,
-		    0, request_size, rcv_name,
-		    timeout, MACH_PORT_NULL);
-
-		if (!((mr == MACH_RCV_TOO_LARGE) && (options & MACH_RCV_LARGE))) {
-			break;
-		}
-
-		new_request_alloc = (mach_msg_size_t)round_page(bufRequest->Head.msgh_size +
-		    trailer_alloc);
-		vm_deallocate(self,
-		    (vm_address_t) bufRequest,
-		    request_alloc);
-		request_size = request_alloc = new_request_alloc;
-	}
-
-	if (mr == MACH_MSG_SUCCESS) {
-		/* we have a request message */
-
-		old_state = voucher_mach_msg_adopt(&bufRequest->Head);
-
-		(void) (*demux)(&bufRequest->Head, &bufReply->Head);
-
-		switch (mach_msg_server_mig_return_code(bufReply)) {
-		case KERN_SUCCESS:
-			break;
-		case MIG_NO_REPLY:
-			bufReply->Head.msgh_remote_port = MACH_PORT_NULL;
-			break;
-		default:
-			/*
-			 * destroy the request - but not the reply port
-			 * (MIG moved it into the bufReply).
-			 */
-			bufRequest->Head.msgh_remote_port = MACH_PORT_NULL;
-			mach_msg_destroy(&bufRequest->Head);
-		}
-
-		/*
-		 *	We don't want to block indefinitely because the client
-		 *	isn't receiving messages from the reply port.
-		 *	If we have a send-once right for the reply port, then
-		 *	this isn't a concern because the send won't block.
-		 *	If we have a send right, we need to use MACH_SEND_TIMEOUT.
-		 *	To avoid falling off the kernel's fast RPC path unnecessarily,
-		 *	we only supply MACH_SEND_TIMEOUT when absolutely necessary.
-		 */
-		if (bufReply->Head.msgh_remote_port != MACH_PORT_NULL) {
-			mr = mach_msg(&bufReply->Head,
-			    (MACH_MSGH_BITS_REMOTE(bufReply->Head.msgh_bits) ==
-			    MACH_MSG_TYPE_MOVE_SEND_ONCE) ?
-			    MACH_SEND_MSG | options :
-			    MACH_SEND_MSG | MACH_SEND_TIMEOUT | options,
-			    bufReply->Head.msgh_size, 0, MACH_PORT_NULL,
-			    timeout, MACH_PORT_NULL);
-
-			if (mach_msg_server_is_recoverable_send_error(mr)) {
-				mach_msg_server_consume_unsent_message(&bufReply->Head);
-				mr = MACH_MSG_SUCCESS;
-			}
-		}
-	}
-
-	voucher_mach_msg_revert(old_state);
-
-	(void)vm_deallocate(self,
-	    (vm_address_t) bufRequest,
-	    request_alloc);
-	(void)vm_deallocate(self,
-	    (vm_address_t) bufReply,
-	    reply_alloc);
-	return mr;
 }

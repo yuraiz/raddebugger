@@ -8,7 +8,6 @@
 //~ Includes
 
 #include "generated/mig_server.h"
-#include "generated/mig_client.h"
 
 ////////////////////////////////
 //~ Exceptions
@@ -20,17 +19,22 @@ typedef struct MAC_DMN_MachMessage {
   };
 } MAC_DMN_MachMessage;
 
-typedef struct MAC_DMN_ExceptionResult
+typedef struct MAC_DMN_ExceptionResult MAC_DMN_ExceptionResult;
+
+struct MAC_DMN_ExceptionResult
 {
+  MAC_DMN_ExceptionResult *next;
+  MAC_DMN_ExceptionResult *prev;
   mach_port_t exception_port;
   mach_port_t thread;
   mach_port_t task;
   S32 exception;
   S64 code;
   S64 subcode;
-  S64 subsubcode;
   B32 timed_out;
-} MAC_DMN_ExceptionResult;
+  MAC_DMN_MachMessage reply;
+  arm_debug_state64_t *dbg_state;
+};
 
 ////////////////////////////////
 //~ Global State
@@ -39,6 +43,11 @@ typedef struct MAC_DMN_ExceptionState
 {
   Arena *arena;
   MAC_DMN_ExceptionResult last_result;
+  
+  MAC_DMN_ExceptionResult *first_exception;
+  MAC_DMN_ExceptionResult *last_exception;
+
+  MAC_DMN_ExceptionResult *free_exception;
 } MAC_DMN_ExceptionState;
 
 ////////////////////////////////
@@ -89,14 +98,6 @@ extern kern_return_t catch_mach_exception_raise_state_identity(
   mach_msg_type_number_t in_state_count,
   thread_state_t out_state,
   mach_msg_type_number_t* out_state_count
-);
-
-mach_msg_return_t
-mach_msg_server_once_with_timeout(
-	boolean_t (*demux)(mach_msg_header_t *, mach_msg_header_t *),
-	mach_msg_size_t max_size,
-	mach_port_t rcv_name,
-	mach_msg_options_t options
 );
 
 #endif // DEMON_OS_MAC_H

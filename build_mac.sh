@@ -43,12 +43,12 @@ if [[ $release ]]; then compile="$compile_release"; fi
 mkdir -p build
 mkdir -p local
 
-# --- Build & Run Mig files ---------------------------------------------------
+# --- Mig Codegen ---------------------------------------------------
 if [[ $mig ]]
 then
   echo "[generating mig files]"
-  gen_dir="src/demon/mac/generated"
-  mig -user "$gen_dir/mig_client.c" -server "$gen_dir/mig_server.c" -header "$gen_dir/mig_client.h" -sheader "$gen_dir/mig_server.h" src/demon/mac/mig.defs
+  gen_dir="src/macos/demon/generated"
+  mig -user "$gen_dir/mig_client.c" -server "$gen_dir/mig_server.c" -header "$gen_dir/mig_client.h" -sheader "$gen_dir/mig_server.h" src/macos/demon/mig.defs
 fi
 
 # --- Build & Run Metaprogram -------------------------------------------------
