@@ -133,8 +133,6 @@ typedef struct MAC_DMN_Thread
   void                   *reg_block;
   // TODO(yuraiz): I would put it in reg_block, but it isn't in debug info
   MAC_DMN_ThreadDebugRegs debug_regs;
-  B32                     hit_hardware_breakpoint;
-  B32                     clear_single_step;
   B32                     is_reg_block_dirty;
   B32                     pass_through_signal;
   U64                     pass_through_signo;
@@ -279,6 +277,7 @@ typedef struct MAC_DMN_ProcessCtx
   MAC_DMN_ActiveTrap    *last_probe_trap;
   // NOTE(we set a trap to that function, and dyld calls it when images are loaded or unloaded)
   U64                    dyld_notifier_address;
+  U8                     dyld_trap_bytes[4];
   MAC_DMN_Module        *first_module;
   MAC_DMN_Module        *last_module;
   U64                    module_count;
