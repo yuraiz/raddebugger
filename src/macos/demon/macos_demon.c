@@ -22,35 +22,6 @@ extern char *__cxa_demangle(const char *mangled_name,
 # define _POSIX_SPAWN_DISABLE_ASLR 0x0100
 #endif
 
-internal MAC_DMN_ActiveTrap *
-mac_dmn_try_set_trap(Arena *arena, DMN_Trap *trap)
-{
-  // NOTE(yuraiz): On macOS reading or writing to the memory fails fairly often.
-  MAC_DMN_ActiveTrap *result = 0;
-  ARCH_Info *arch = arch_info_from_arch(Arch_CURRENT);
-  String8 trap_inst = arch->trap_instruction;
-  U8 *swap_bytes = push_array(arena, U8, trap_inst.size);
-  if(dmn_process_read(trap->process, r1u64(trap->vaddr, trap->vaddr + trap_inst.size), swap_bytes) == trap_inst.size)
-  {
-    // NOTE(yuraiz): Initially the check was `== trap_inst.size`, but since the type is B32 I assume that's a mistake.
-    if(dmn_process_write(trap->process, r1u64(trap->vaddr, trap->vaddr + trap_inst.size), trap_inst.str))
-    {
-      result = push_array(arena, MAC_DMN_ActiveTrap, 1);
-      result->trap       = trap;
-      result->swap_bytes = str8(swap_bytes, trap_inst.size);
-    }
-    else
-    {
-      fprintf(stderr, "failed to write trap instruction\n");
-    }
-  }
-  else
-  {
-    fprintf(stderr, "failed to read original bytes\n");
-  }
-  return result;
-}
-
 internal B32
 mac_dmn_write_to_protected(
     const task_t task,
@@ -61,6 +32,20 @@ mac_dmn_write_to_protected(
 ) {
   // NOTE(yuraiz): on macOS memory writable XOR executable.
   // so we need to change the protection before writing to it and revert back after.
+
+  {
+    // TODO(yuraiz): Figure out if it's required to round to the page size
+    U64 page_size = get_system_info()->page_size;
+    U64 min = AlignDownPow2(address, page_size);
+    U64 max = AlignPow2(address + size, page_size);
+    vm_machine_attribute_val_t value = MATTR_VAL_CACHE_FLUSH;
+    kern_return_t kr = mach_vm_machine_attribute(task, min, max - min, MATTR_CACHE, &value);
+    // TODO(yuraiz): The debugger tries to write to 0 on step out, figure out why
+    if(kr != 0 && address != 0)
+    {
+      printf("call to mach_vm_machine_attribute failed %p..%p: %s\n", address, size, mach_error_string(kr));
+    }
+  }
 
   mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
   vm_region_submap_short_info_data_64_t region_info = {0};
@@ -140,16 +125,6 @@ mac_dmn_write_to_protected(
     address,
     (vm_offset_t)data,
     (mach_msg_type_number_t)size
-  );
-
-  // flush from the caches
-  vm_machine_attribute_val_t value = MATTR_VAL_CACHE_FLUSH;
-  mach_vm_machine_attribute(
-      task,
-      region_address,
-      region_size,
-      MATTR_CACHE,
-      &value
   );
 
   // re-protect the region back to the way it was
@@ -319,6 +294,12 @@ mac_dmn_thread_read_reg_block(MAC_DMN_Thread *thread)
       {
         ARM64_RegBlock *reg_block = thread->reg_block;
         
+        // NOTE(yuraiz): lldb calls that before reading the register state.
+        // 
+        // It's needed to ensure the registers for a thread are correct in case
+        // it is currently having code run on its behalf in the kernel.
+        thread_abort_safely(thread->tid);
+
         mach_msg_type_number_t count;
 
         arm_thread_state64_t thread_state = {0};
@@ -334,6 +315,12 @@ mac_dmn_thread_read_reg_block(MAC_DMN_Thread *thread)
         // arm_exception_state64_v2_t exception_state = {0};
         // count = ARM_EXCEPTION_STATE64_V2_COUNT;
         // thread_get_state(thread->tid, ARM_EXCEPTION_STATE64_V2, (thread_state_t)&exception_state, &count);
+
+        // TODO(yuraiz): Look into THREAD_CONVERT_THREAD_STATE_FROM/TO_SELF, I guess that's for PAC support
+        // kern_return_t convert_kret = thread_convert_thread_state(
+        // thread, THREAD_CONVERT_THREAD_STATE_FROM_SELF,
+        // ARM_THREAD_STATE64, (thread_state_t)&current_state, count,
+        // (thread_state_t)&new_gpr, &new_count);
 
         // NOTE(yuraiz): Some of the registers are omitted in reg_block.
 
@@ -373,6 +360,8 @@ mac_dmn_thread_write_reg_block(MAC_DMN_Thread *thread)
       arm_thread_state64_t thread_state = {0};
       arm_neon_state64_t neon_state = {0};
       arm_debug_state64_t debug_state = {0};
+
+      thread_abort_safely(thread->tid);
 
       count = ARM_THREAD_STATE64_COUNT;
       thread_get_state(thread->tid, ARM_THREAD_STATE64, (thread_state_t)&thread_state, &count);
@@ -1531,26 +1520,12 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
 }
 
 internal void
-mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_ActiveTrap *user_traps, pid_t tid)
+mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid)
 {
   MAC_DMN_Thread  *thread  = mac_dmn_thread_from_pid(tid);
   U64              ip      = mac_dmn_thread_read_ip(thread);
 
   DMN_Handle process = mac_dmn_handle_from_process(thread->process);
-
-  DMN_Trap *hit_user_trap = 0;
-  for EachNode(mac_trap, MAC_DMN_ActiveTrap, user_traps)
-  {
-    DMN_Trap *trap = mac_trap->trap;
-    if(dmn_handle_match(trap->process, process))
-    {
-      if(trap->flags == 0 && dmn_handle_match(trap->process, process) && trap->vaddr == ip)
-      {
-        hit_user_trap = trap;
-        break;
-      }
-    }
-  }
 
   // rjf: generate event
   DMN_Event *e = dmn_event_list_push(arena, events);
@@ -1818,63 +1793,55 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
   // wait for signals from the running threads
   if(mac_dmn_state->process_count > 0)
   {
-    // write traps to memory
-    MAC_DMN_ActiveTrap *active_trap_first = 0, *active_trap_last = 0;
+    ARCH_Info *arch_info = arch_info_from_arch(Arch_CURRENT);
+    
+    ////////////////////////////
+    //- rjf: read initial bytes at all trap locations
+    //
+    U64 bytes_per_trap = arch_info->trap_instruction.size;
+    U8 *trap_swap_bytes = push_array(scratch.arena, U8, ctrls->traps.trap_count * bytes_per_trap);
     {
-      HashTable *process_ht = hash_table_init(scratch.arena, mac_dmn_state->process_count);
+      U64 trap_idx = 0;
       for EachNode(n, DMN_TrapChunkNode, ctrls->traps.first)
       {
         for EachIndex(n_idx, n->count)
         {
-          // skip hardware breakpoints
           DMN_Trap *trap = n->v+n_idx;
-          if(trap->flags) { continue; }
-          
-          HashTable *active_trap_ht = hash_table_search_u64_raw(process_ht, trap->process.u64[0]);
-          if(active_trap_ht == 0)
+          if(trap->flags == 0)
           {
-            active_trap_ht = hash_table_init(scratch.arena, ctrls->traps.trap_count);
-            hash_table_push_u64_raw(scratch.arena, process_ht, trap->process.u64[0], active_trap_ht);
+            dmn_process_read(trap->process, r1u64(trap->vaddr, trap->vaddr + bytes_per_trap), trap_swap_bytes + trap_idx*bytes_per_trap);
           }
-          
-          // TODO: ctrl sends down duplicate traps
-          MAC_DMN_ActiveTrap *is_set = hash_table_search_u64_raw(active_trap_ht, trap->vaddr);
-          if(is_set) { continue; }
-          
-          // TODO: ctrl sends down traps for exited process
-          MAC_DMN_Process *process = mac_dmn_process_from_handle(trap->process);
-          if(!process) { continue; }
-
-          // trap instruction
-          MAC_DMN_ActiveTrap *active_trap = mac_dmn_try_set_trap(scratch.arena, trap);
-          if(active_trap != 0)
+          trap_idx += 1;
+        }
+      }
+    }
+    
+    ////////////////////////////
+    //- rjf: write all trap instructions
+    //
+    {
+      for EachNode(n, DMN_TrapChunkNode, ctrls->traps.first)
+      {
+        for EachIndex(n_idx, n->count)
+        {
+          DMN_Trap *trap = n->v+n_idx;
+          if(trap->flags == 0)
           {
-            // add trap to the active list
-            SLLQueuePush(active_trap_first, active_trap_last, active_trap);
-            
-            // add (address -> trap)
-            hash_table_push_u64_raw(scratch.arena, active_trap_ht, trap->vaddr, active_trap);
-          }
-          else
-          {
-            // TODO(yuraiz): Somehow pass the failure to GUI
-            printf("Failed to set trap %p\n", trap->vaddr);
+            dmn_process_write(trap->process, r1u64(trap->vaddr, trap->vaddr + bytes_per_trap), arch_info->trap_instruction.str);
           }
         }
       }
     }
-
-    // enable single stepping
+    
+    ////////////////////////////
+    //- rjf: enable single stepping
+    //
     if(!dmn_handle_match(ctrls->single_step_thread, dmn_handle_zero()))
     {
       MAC_DMN_Thread *single_step_thread = mac_dmn_thread_from_handle(ctrls->single_step_thread);
       if(single_step_thread)
       {
         mac_dmn_set_single_step_flag(single_step_thread, 1);
-      }
-      else
-      {
-        Assert(0 && "invalid single_step_thread handle");
       }
     }
     
@@ -1895,6 +1862,12 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
               break;
             }
           }
+        }
+
+        B32 should_resume = 0;
+        if(!process_is_frozen)
+        {
+          should_resume = mac_dmn_reply_to_pending_exceptions_for_task(process->task);
         }
         
         for EachNode(thread, MAC_DMN_Thread, process->first_thread)
@@ -1963,6 +1936,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
               //     sig_code = (int)thread->pass_through_signo;
               //   }
               // }
+
               if(was_frozen)
               {
                 thread_resume(thread->tid);
@@ -1978,7 +1952,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           }
         }
 
-        if(!process_is_frozen)
+        if(should_resume)
         {
           task_resume(process->task);
         }
@@ -2142,15 +2116,15 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         }
       }
 
-      // // read thread registers
-      // if(result.exception != 0)
-      // {
-      //   MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
-      //   if(thread != 0)
-      //   {
-      //     thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
-      //   }
-      // }
+      // read thread registers
+      if(result.exception != 0)
+      {
+        MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+        if(thread != 0)
+        {
+          thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
+        }
+      }
 
       if(result.exception == EXC_BREAKPOINT)
       {
@@ -2164,7 +2138,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
           }
           else
           {
-            mac_dmn_event_breakpoint(arena, &events, active_trap_first, result.thread);
+            mac_dmn_event_breakpoint(arena, &events, result.thread);
           }
         }
         break;
@@ -2214,16 +2188,22 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       mac_dmn_state->is_halting     = 0;
     }
     
-    // restore original instruction bytes
-    for EachNode(active_trap, MAC_DMN_ActiveTrap, active_trap_first)
+    ////////////////////////////
+    //- rjf: unset all traps - restore original bytes
+    //
     {
-      // skip process that exited during the wait
-      MAC_DMN_Process *process = mac_dmn_process_from_handle(active_trap->trap->process);
-      if(!process) { continue; }
-      
-      if(!dmn_process_write(active_trap->trap->process, r1u64(active_trap->trap->vaddr, active_trap->trap->vaddr + active_trap->swap_bytes.size), active_trap->swap_bytes.str))
+      U64 trap_idx = 0;
+      for EachNode(n, DMN_TrapChunkNode, ctrls->traps.first)
       {
-        // Assert(0 && "failed to restore original instruction bytes");
+        for EachIndex(n_idx, n->count)
+        {
+          DMN_Trap *trap = n->v+n_idx;
+          if(trap->flags == 0)
+          {
+            dmn_process_write(trap->process, r1u64(trap->vaddr, trap->vaddr + bytes_per_trap), trap_swap_bytes + trap_idx*bytes_per_trap);
+          }
+          trap_idx += 1;
+        }
       }
     }
   }

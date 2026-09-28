@@ -404,7 +404,7 @@ internal MAC_DMN_Process *    mac_dmn_event_create_process(Arena *arena, DMN_Eve
 internal void                 mac_dmn_event_exit_process(Arena *arena, DMN_EventList *events, pid_t pid);
 internal void                 mac_dmn_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, U64 name_space_id, U64 new_link_map_vaddr);
 internal void                 mac_dmn_event_unload_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, MAC_DMN_Module *module);
-internal void                 mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_ActiveTrap *user_traps, pid_t tid);
+internal void                 mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid);
 internal void                 mac_dmn_event_data_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid);
 internal void                 mac_dmn_event_halt(Arena *arena, DMN_EventList *events);
 internal void                 mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, pid_t tid);
