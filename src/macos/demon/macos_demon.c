@@ -584,22 +584,24 @@ mac_dmn_entity_alloc(MAC_DMN_EntityKind kind)
 }
 
 internal MAC_DMN_Process *
-mac_dmn_process_alloc(pid_t pid, MAC_DMN_ProcessState state, MAC_DMN_Process *parent_process, B32 debug_subprocesses, B32 is_cow)
+mac_dmn_process_alloc(task_t task, MAC_DMN_ProcessState state, MAC_DMN_Process *parent_process, B32 debug_subprocesses, B32 is_cow)
 {
   Temp scratch = scratch_begin(0, 0);
+
+  pid_t pid = 0;
+  kern_return_t kr = pid_for_task(task, &pid);
+  if(kr != 0)
+  {
+    fprintf(stderr, "%s: %s\n", __func__, mach_error_string(kr));
+  }
   
   MAC_DMN_Process *process = &mac_dmn_entity_alloc(MAC_DMN_EntityKind_Process)->process;
   process->pid                = pid;
+  process->task               = task;
   process->state              = state;
   process->debug_subprocesses = debug_subprocesses;
   process->is_cow             = is_cow;
   process->parent_process     = parent_process;
-  
-  kern_return_t status_code = task_for_pid(mach_task_self(), pid, &process->task);
-  if(status_code != 0)
-  {
-    fprintf(stderr, "%%s: s", __func__, mach_error_string(status_code));
-  }
 
   mac_dmn_subscribe_to_exceptions(process->task, mac_dmn_state->exc_port);
   
@@ -613,9 +615,14 @@ mac_dmn_process_alloc(pid_t pid, MAC_DMN_ProcessState state, MAC_DMN_Process *pa
   DLLPushBack(mac_dmn_state->first_process, mac_dmn_state->last_process, process);
   mac_dmn_state->process_count += 1;
   
-  // push pid -> MAC_DMN_Process mapping
-  hash_table_push_u64_raw(mac_dmn_state->arena, mac_dmn_state->pid_ht, pid, process);
-  
+  // push task -> MAC_DMN_Process mapping
+  {
+    U64 key = (U64)process->task;
+    U64 hash = u64_hash_from_str8(str8_struct(&key));
+    U64 slot_idx = hash%mac_dmn_state->process_from_task_slots_count;
+    DLLPushBack_NP(mac_dmn_state->process_from_task_slots[slot_idx].first, mac_dmn_state->process_from_task_slots[slot_idx].last, process, hash_next, hash_prev);
+  }
+
   scratch_end(scratch);
   return process;
 }
@@ -732,7 +739,9 @@ mac_dmn_process_ctx_alloc(MAC_DMN_Process *process, B32 is_rebased)
 
   ctx->arena             = arena_alloc();
   ctx->arch              = Arch_arm64;
-  ctx->loaded_modules_ht = hash_table_init(ctx->arena, 0x1000);
+  // TODO(yuraiz): Actually use the module table
+  ctx->module_slots_count= 4096;
+  ctx->module_slots      = push_array(ctx->arena, MAC_DMN_ModuleSlot, ctx->module_slots_count);
   
   return ctx;
 }
@@ -787,7 +796,12 @@ mac_dmn_thread_alloc(MAC_DMN_Process *process, MAC_DMN_ThreadState thread_state,
   process->thread_count += 1;
   
   // push tid -> thread mapping
-  hash_table_push_u64_raw(mac_dmn_state->arena, mac_dmn_state->tid_ht, thread->tid, thread);
+  {
+    U64 key = (U64)thread->tid;
+    U64 hash = u64_hash_from_str8(str8_struct(&key));
+    U64 slot_idx = hash%mac_dmn_state->thread_from_tid_slots_count;
+    DLLPushBack_NP(mac_dmn_state->thread_from_tid_slots[slot_idx].first, mac_dmn_state->thread_from_tid_slots[slot_idx].last, thread, hash_next, hash_prev);
+  }
   
   // update global thread counter
   if(thread_state == MAC_DMN_ThreadState_PendingCreation)
@@ -822,8 +836,13 @@ mac_dmn_process_release(MAC_DMN_Process *process)
     mac_dmn_state->process_pending_creation -= 1;
   }
   
-  // remove pid mapping
-  hash_table_purge_u64(mac_dmn_state->pid_ht, process->pid);
+  // remove task mapping
+  {
+    U64 key = (U64)process->task;
+    U64 hash = u64_hash_from_str8(str8_struct(&key));
+    U64 slot_idx = hash%mac_dmn_state->process_from_task_slots_count;
+    DLLRemove_NP(mac_dmn_state->process_from_task_slots[slot_idx].first, mac_dmn_state->process_from_task_slots[slot_idx].last, process, hash_next, hash_prev);
+  }
   
   // release the context
   if(process->ctx)
@@ -854,8 +873,13 @@ mac_dmn_thread_release(MAC_DMN_Thread *thread)
 {
   MAC_DMN_Process *process = thread->process;
   
-  // purge tid mapping
-  hash_table_purge_u64(mac_dmn_state->tid_ht, thread->tid);
+  // remove tid mapping
+  {
+    U64 key = (U64)thread->tid;
+    U64 hash = u64_hash_from_str8(str8_struct(&key));
+    U64 slot_idx = hash%mac_dmn_state->thread_from_tid_slots_count;
+    DLLRemove_NP(mac_dmn_state->thread_from_tid_slots[slot_idx].first, mac_dmn_state->thread_from_tid_slots[slot_idx].last, thread, hash_next, hash_prev);
+  }
   
   // update global thread counter
   if(thread->state == MAC_DMN_ThreadState_PendingCreation)
@@ -892,9 +916,14 @@ mac_dmn_module_release(MAC_DMN_ProcessCtx *ctx, MAC_DMN_Module *module)
   Assert(ctx->module_count > 0);
   DLLRemove(ctx->first_module, ctx->last_module, module);
   ctx->module_count -= 1;
-  
-  // purge base addr -> module mapping
-  hash_table_purge_u64(ctx->loaded_modules_ht, module->base_vaddr);
+ 
+  // remove base addr -> module mapping
+  {
+    U64 key = (U64)module->base_vaddr;
+    U64 hash = u64_hash_from_str8(str8_struct(&key));
+    U64 slot_idx = hash%ctx->module_slots_count;
+    DLLRemove_NP(ctx->module_slots[slot_idx].first, ctx->module_slots[slot_idx].last, module, hash_next, hash_prev);
+  }
   
   mac_dmn_entity_release((MAC_DMN_Entity *)module);
 }
@@ -988,15 +1017,41 @@ mac_dmn_module_from_handle(DMN_Handle module_handle)
 }
 
 internal MAC_DMN_Thread *
-mac_dmn_thread_from_pid(pid_t tid)
+mac_dmn_thread_from_port(thread_t tid)
 {
-  return hash_table_search_u64_raw(mac_dmn_state->tid_ht, tid);
+  MAC_DMN_Thread *result = 0;
+  U64 key = (U64)tid;
+  U64 hash = u64_hash_from_str8(str8_struct(&key));
+  U64 slot_idx = hash%mac_dmn_state->thread_from_tid_slots_count;
+  for(MAC_DMN_Thread *t = mac_dmn_state->thread_from_tid_slots[slot_idx].first; t != 0; t = t->hash_next)
+  {
+    if(t->tid == tid)
+    {
+      result = t;
+      break;
+    }
+  }
+  return result;
 }
 
 internal MAC_DMN_Process *
-mac_dmn_process_from_pid(pid_t pid)
+mac_dmn_process_from_port(task_t task)
 {
-  return hash_table_search_u64_raw(mac_dmn_state->pid_ht, pid);
+  // NOTE(yuraiz): Currently hash tables are used for port->process/thread mappings.
+  // The task port changes during exec, without the pid change, pid mapping may be useful too.
+  MAC_DMN_Process *result = 0;
+  U64 key = (U64)task;
+  U64 hash = u64_hash_from_str8(str8_struct(&key));
+  U64 slot_idx = hash%mac_dmn_state->process_from_task_slots_count;
+  for(MAC_DMN_Process *p = mac_dmn_state->process_from_task_slots[slot_idx].first; p != 0; p = p->hash_next)
+  {
+    if(p->task == task)
+    {
+      result = p;
+      break;
+    }
+  }
+  return result;
 }
 
 // event helpers
@@ -1248,9 +1303,9 @@ mac_dmn_event_create_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Process
 }
 
 internal void
-mac_dmn_event_exit_thread(Arena *arena, DMN_EventList *events, pid_t tid, U64 exit_code)
+mac_dmn_event_exit_thread(Arena *arena, DMN_EventList *events, thread_t tid, U64 exit_code)
 {
-  MAC_DMN_Thread  *thread  = mac_dmn_thread_from_pid(tid);
+  MAC_DMN_Thread  *thread  = mac_dmn_thread_from_port(tid);
   MAC_DMN_Process *process = thread->process;
   
   // store main thread's exit code
@@ -1268,14 +1323,24 @@ mac_dmn_event_exit_thread(Arena *arena, DMN_EventList *events, pid_t tid, U64 ex
   // auto exit process on last thread
   if(process->thread_count == 0)
   {
-    mac_dmn_event_exit_process(arena, events, process->pid);
+    // push module events
+    for EachNode(module, MAC_DMN_Module, process->ctx->first_module)
+    {
+      mac_dmn_push_event_unload_module(arena, events, process, module);
+    }
+    
+    // push process exit event
+    mac_dmn_push_event_exit_process(arena, events, process);
+
+    // release process
+    mac_dmn_process_release(process);
   }
 }
 
 internal MAC_DMN_Process *
-mac_dmn_event_create_process(Arena *arena, DMN_EventList *events, pid_t pid, MAC_DMN_Process *parent_process, MAC_DMN_CreateProcessFlags flags)
+mac_dmn_event_create_process(Arena *arena, DMN_EventList *events, task_t task, MAC_DMN_Process *parent_process, MAC_DMN_CreateProcessFlags flags)
 {
-  MAC_DMN_Process *process = mac_dmn_process_alloc(pid, MAC_DMN_ProcessState_Normal, parent_process, !!(flags & MAC_DMN_CreateProcessFlag_DebugSubprocesses), !!(flags & MAC_DMN_CreateProcessFlag_Cow));
+  MAC_DMN_Process *process = mac_dmn_process_alloc(task, MAC_DMN_ProcessState_Normal, parent_process, !!(flags & MAC_DMN_CreateProcessFlag_DebugSubprocesses), !!(flags & MAC_DMN_CreateProcessFlag_Cow));
   
   if(flags & MAC_DMN_CreateProcessFlag_ClonedMemory)
   {
@@ -1291,25 +1356,6 @@ mac_dmn_event_create_process(Arena *arena, DMN_EventList *events, pid_t pid, MAC
   mac_dmn_push_event_create_process(arena, events, process);
 
   return process;
-}
-
-internal void
-mac_dmn_event_exit_process(Arena *arena, DMN_EventList *events, pid_t pid)
-{
-  MAC_DMN_Process *process = mac_dmn_process_from_pid(pid);
-  AssertAlways(process->thread_count == 0);
-  
-  // push module events
-  for EachNode(module, MAC_DMN_Module, process->ctx->first_module)
-  {
-    mac_dmn_push_event_unload_module(arena, events, process, module);
-  }
-  
-  // push process exit event
-  mac_dmn_push_event_exit_process(arena, events, process);
-
-  // release process
-  mac_dmn_process_release(process);
 }
 
 internal void
@@ -1487,9 +1533,9 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
 }
 
 internal void
-mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid)
+mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, thread_t tid)
 {
-  MAC_DMN_Thread  *thread  = mac_dmn_thread_from_pid(tid);
+  MAC_DMN_Thread  *thread  = mac_dmn_thread_from_port(tid);
   U64              ip      = mac_dmn_thread_read_ip(thread);
 
   DMN_Handle process = mac_dmn_handle_from_process(thread->process);
@@ -1505,9 +1551,9 @@ mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid)
 }
 
 internal void
-mac_dmn_event_data_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid)
+mac_dmn_event_data_breakpoint(Arena *arena, DMN_EventList *events, thread_t tid)
 {
-  MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(tid);
+  MAC_DMN_Thread *thread = mac_dmn_thread_from_port(tid);
   
   B32 is_valid = 1;
   U64 address  = 0;
@@ -1535,9 +1581,9 @@ mac_dmn_event_halt(Arena *arena, DMN_EventList *events)
 }
 
 internal void
-mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, pid_t tid)
+mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, thread_t tid)
 {
-  MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(tid);
+  MAC_DMN_Thread *thread = mac_dmn_thread_from_port(tid);
   
   // clear single step flag
   mac_dmn_set_single_step_flag(thread, 0);
@@ -1547,9 +1593,9 @@ mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, pid_t tid)
 }
 
 internal void
-mac_dmn_event_exception(Arena *arena, DMN_EventList *events, pid_t tid, U64 signo)
+mac_dmn_event_exception(Arena *arena, DMN_EventList *events, thread_t tid, U64 signo)
 {
-  MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(tid);
+  MAC_DMN_Thread *thread = mac_dmn_thread_from_port(tid);
   
   thread->pass_through_signal = 1;
   thread->pass_through_signo  = signo;
@@ -1558,12 +1604,12 @@ mac_dmn_event_exception(Arena *arena, DMN_EventList *events, pid_t tid, U64 sign
 }
 
 internal MAC_DMN_Process *
-mac_dmn_event_attach(Arena *arena, DMN_EventList *events, pid_t pid)
+mac_dmn_event_attach(Arena *arena, DMN_EventList *events, task_t task)
 {
   Temp scratch = scratch_begin(&arena, 1);
   
   // create process
-  MAC_DMN_Process *process = mac_dmn_event_create_process(arena, events, pid, 0, MAC_DMN_CreateProcessFlag_DebugSubprocesses|MAC_DMN_CreateProcessFlag_Rebased);
+  MAC_DMN_Process *process = mac_dmn_event_create_process(arena, events, task, 0, MAC_DMN_CreateProcessFlag_DebugSubprocesses|MAC_DMN_CreateProcessFlag_Rebased);
   
   // handshake complete
   mac_dmn_push_event_handshake_complete(arena, events, process);
@@ -1587,13 +1633,19 @@ dmn_init(void)
     mac_dmn_state->access_mutex   = mutex_alloc();
     mac_dmn_state->entities_arena = arena_alloc(.reserve_size = GB(32), .commit_size = KB(64), .flags = ArenaFlag_NoChain);
     mac_dmn_state->entities_base  = push_array(mac_dmn_state->entities_arena, MAC_DMN_Entity, 0);
-    mac_dmn_state->tid_ht         = hash_table_init(mac_dmn_state->arena, 0x2000);
-    mac_dmn_state->pid_ht         = hash_table_init(mac_dmn_state->arena, 0x400);
     mac_dmn_state->halter_mutex   = mutex_alloc();
     mac_dmn_entity_alloc(MAC_DMN_EntityKind_Null);
 
     mac_dmn_state->exc_port = mac_dmn_make_exception_port();
     
+    // rjf: set up id <-> entity tables
+    {
+      mac_dmn_state->process_from_task_slots_count = 4096;
+      mac_dmn_state->process_from_task_slots = push_array(mac_dmn_state->arena, MAC_DMN_ProcessSlot, mac_dmn_state->process_from_task_slots_count);
+      mac_dmn_state->thread_from_tid_slots_count = 16384;
+      mac_dmn_state->thread_from_tid_slots = push_array(mac_dmn_state->arena, MAC_DMN_ThreadSlot, mac_dmn_state->thread_from_tid_slots_count);
+    }
+
   }
   if(mac_dmn_exception_state == 0)
   {
@@ -1698,7 +1750,7 @@ dmn_ctrl_launch(DMN_CtrlCtx *ctx, ProcessLaunchParams *params)
       return 0;
     }
     
-    MAC_DMN_Process* process = mac_dmn_process_alloc(pid, MAC_DMN_ProcessState_Launch, 0, params->debug_subprocesses, 0);
+    MAC_DMN_Process* process = mac_dmn_process_alloc(task, MAC_DMN_ProcessState_Launch, 0, params->debug_subprocesses, 0);
     process->ctx = mac_dmn_process_ctx_alloc(process, 0);
 
     ptrace(PT_ATTACHEXC, pid, 0, 0);
@@ -1719,7 +1771,7 @@ dmn_ctrl_attach(DMN_CtrlCtx *ctx, U32 pid)
   {
     if(task_suspend(task) == 0)
     {
-      mac_dmn_process_alloc(pid, MAC_DMN_ProcessState_Attach, 0, 1, 0);
+      mac_dmn_process_alloc(task, MAC_DMN_ProcessState_Attach, 0, 1, 0);
       is_attached = 1;
     }
   }
@@ -1928,13 +1980,6 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       }
     }
     
-    // hash running threads tids
-    HashTable *running_threads_ht = hash_table_init(scratch.arena, running_threads.count * 2);
-    for EachNode(n, MAC_DMN_ThreadPtrNode, running_threads.first)
-    {
-      hash_table_push_u64_raw(scratch.arena, running_threads_ht, n->v->tid, n);
-    }
-    
     B32                   is_halt_done    = 0;
     MAC_DMN_ThreadPtrList stopped_threads = {0};
     do
@@ -2010,9 +2055,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
 
       // intercept initing processes
       {
-        pid_t pid = 0;
-        kern_return_t status_code = pid_for_task(result.task, &pid);
-        MAC_DMN_Process *process = mac_dmn_process_from_pid(pid);
+        MAC_DMN_Process *process = mac_dmn_process_from_port(result.task);
         
         if(process && process->state != MAC_DMN_ProcessState_Normal)
         {
@@ -2049,7 +2092,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
 
                 MAC_DMN_CreateProcessFlags create_flags = process->debug_subprocesses ? MAC_DMN_CreateProcessFlag_DebugSubprocesses : 0;
                 mac_dmn_process_release(process);
-                process = mac_dmn_event_create_process(arena, &events, pid, 0, create_flags);
+                process = mac_dmn_event_create_process(arena, &events, result.task, 0, create_flags);
 
                 // compute the initial dyld notifier address
                 mac_dmn_process_update_dyld_notifier_addr(process);
@@ -2074,7 +2117,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       }
 
   
-      MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+      MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
 
       // clear the exception if it's our probe and handle the probe
       if(result.exception == EXC_BREAKPOINT)
@@ -2088,7 +2131,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
       // read thread registers
       if(result.exception != 0)
       {
-        MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+        MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
         if(thread != 0)
         {
           thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
@@ -2097,7 +2140,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
 
       if(result.exception == EXC_BREAKPOINT)
       {
-        MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+        MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
         if(!mac_dmn_event_probe_breakpoint(arena, &events, thread, result.subcode))
         {
           // TODO(yuraiz): handle different types of breakpoints
@@ -2119,7 +2162,7 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         if(result.code == 257)
         {
           printf("bad access %d\n", result.subcode);
-          MAC_DMN_Thread *thread = mac_dmn_thread_from_pid(result.thread);
+          MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
 
           DMN_Event *e = dmn_event_list_push(arena, &events);
           e->kind                = DMN_EventKind_Exception;

@@ -125,7 +125,8 @@ typedef struct MAC_DMN_ThreadDebugRegs
   U64 mdscr_el1;
 } MAC_DMN_ThreadDebugRegs;
 
-typedef struct MAC_DMN_Thread
+typedef struct MAC_DMN_Thread MAC_DMN_Thread;
+struct MAC_DMN_Thread
 {
   thread_act_t            tid;
   MAC_DMN_ThreadState     state;
@@ -141,9 +142,21 @@ typedef struct MAC_DMN_Thread
   // NOTE(yuraiz): Those match internal pthread_s values
   U64                     stackaddr;
   U64                     stackbottom;
-  struct MAC_DMN_Thread *next;
-  struct MAC_DMN_Thread *prev;
-} MAC_DMN_Thread;
+
+  MAC_DMN_Thread *next;
+  MAC_DMN_Thread *prev;
+
+    
+  MAC_DMN_Thread *hash_next;
+  MAC_DMN_Thread *hash_prev;
+};
+
+typedef struct MAC_DMN_ThreadSlot MAC_DMN_ThreadSlot;
+struct MAC_DMN_ThreadSlot
+{
+  MAC_DMN_Thread *first;
+  MAC_DMN_Thread *last;
+};
 
 typedef struct MAC_DMN_ThreadPtrNode
 {
@@ -159,7 +172,8 @@ typedef struct MAC_DMN_ThreadPtrList
   MAC_DMN_ThreadPtrNode *last;
 } MAC_DMN_ThreadPtrList;
 
-typedef struct MAC_DMN_Module
+typedef struct MAC_DMN_Module MAC_DMN_Module;
+struct MAC_DMN_Module
 {
   U64 name_vaddr;
   U64 base_vaddr;
@@ -188,9 +202,19 @@ typedef struct MAC_DMN_Module
   Rng1U64 symstr_range;
   struct dysymtab_command dysymtab;
   
-  struct MAC_DMN_Module *next;
-  struct MAC_DMN_Module *prev;
-} MAC_DMN_Module;
+  MAC_DMN_Module *next;
+  MAC_DMN_Module *prev;
+
+  MAC_DMN_Module *hash_next;
+  MAC_DMN_Module *hash_prev;
+};
+
+typedef struct MAC_DMN_ModuleSlot MAC_DMN_ModuleSlot;
+struct MAC_DMN_ModuleSlot
+{
+  MAC_DMN_Module *first;
+  MAC_DMN_Module *last;
+};
 
 typedef struct MAC_DMN_ModulePtrNode
 {
@@ -222,7 +246,8 @@ typedef enum
   MAC_DMN_CreateProcessFlag_ClonedMemory      = (1 << 3),
 } MAC_DMN_CreateProcessFlags;
 
-typedef struct MAC_DMN_Process
+typedef struct MAC_DMN_Process MAC_DMN_Process;
+struct MAC_DMN_Process
 {
   pid_t                      pid;
   task_t                     task;
@@ -237,12 +262,22 @@ typedef struct MAC_DMN_Process
   MAC_DMN_Thread            *first_thread;
   MAC_DMN_Thread            *last_thread;
   U64                        main_thread_exit_code;
-  struct MAC_DMN_Process    *parent_process;
+  MAC_DMN_Process           *parent_process;
   struct MAC_DMN_ProcessCtx *ctx;
 
-  struct MAC_DMN_Process *next;
-  struct MAC_DMN_Process *prev;
-} MAC_DMN_Process;
+  MAC_DMN_Process *next;
+  MAC_DMN_Process *prev;
+
+  MAC_DMN_Process *hash_next;
+  MAC_DMN_Process *hash_prev;
+};
+
+typedef struct MAC_DMN_ProcessSlot MAC_DMN_ProcessSlot;
+struct MAC_DMN_ProcessSlot
+{
+  MAC_DMN_Process *first;
+  MAC_DMN_Process *last;
+};
 
 typedef struct MAC_DMN_ProcessPtrNode
 {
@@ -271,7 +306,8 @@ typedef struct MAC_DMN_ProcessCtx
 {
   Arena                 *arena;
   Arch                   arch;
-  HashTable             *loaded_modules_ht;
+  U64                    module_slots_count;
+  MAC_DMN_ModuleSlot    *module_slots;
   MAC_DMN_Probe        **probes;
   MAC_DMN_ActiveTrap    *first_probe_trap;
   MAC_DMN_ActiveTrap    *last_probe_trap;
@@ -337,8 +373,11 @@ typedef struct MAC_DMN_State
   MAC_DMN_Entity *free_entity;
   U64             entities_count;
 
-  HashTable *tid_ht; // thread id -> thread entity
-  HashTable *pid_ht; // process id -> process entity
+  // rjf: id -> entity tables
+  MAC_DMN_ProcessSlot *process_from_task_slots;
+  U64 process_from_task_slots_count;
+  MAC_DMN_ThreadSlot *thread_from_tid_slots;
+  U64 thread_from_tid_slots_count;
 
   // process tracking
   U64              process_count;
@@ -372,7 +411,7 @@ thread_static B32 mac_dmn_ctrl_thread = 0;
 //~ rjf: Helpers
 
 internal MAC_DMN_Entity *     mac_dmn_entity_alloc(MAC_DMN_EntityKind kind);
-internal MAC_DMN_Process *    mac_dmn_process_alloc(pid_t pid, MAC_DMN_ProcessState state, MAC_DMN_Process *parent_process, B32 debug_subprocesses, B32 is_cow);
+internal MAC_DMN_Process *    mac_dmn_process_alloc(task_t task, MAC_DMN_ProcessState state, MAC_DMN_Process *parent_process, B32 debug_subprocesses, B32 is_cow);
 internal DMN_Handle           mac_dmn_handle_from_entity(MAC_DMN_Entity *entity);
 internal DMN_Handle           mac_dmn_handle_from_process(MAC_DMN_Process *process);
 internal DMN_Handle           mac_dmn_handle_from_process_ctx(MAC_DMN_ProcessCtx *process_ctx);
@@ -398,16 +437,15 @@ internal void                 mac_dmn_push_event_halt(Arena *arena, DMN_EventLis
 internal void                 mac_dmn_push_event_not_attached(Arena *arena, DMN_EventList *events);
 
 internal MAC_DMN_Thread *     mac_dmn_event_create_thread(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, thread_act_t tid);
-internal void                 mac_dmn_event_exit_thread(Arena *arena, DMN_EventList *events, pid_t tid, U64 exit_code);
-internal MAC_DMN_Process *    mac_dmn_event_create_process(Arena *arena, DMN_EventList *events, pid_t pid, MAC_DMN_Process *parent_process, MAC_DMN_CreateProcessFlags flags);
-internal void                 mac_dmn_event_exit_process(Arena *arena, DMN_EventList *events, pid_t pid);
+internal void                 mac_dmn_event_exit_thread(Arena *arena, DMN_EventList *events, thread_t thread, U64 exit_code);
+internal MAC_DMN_Process *    mac_dmn_event_create_process(Arena *arena, DMN_EventList *events, task_t task, MAC_DMN_Process *parent_process, MAC_DMN_CreateProcessFlags flags);
 internal void                 mac_dmn_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, U64 name_space_id, U64 new_link_map_vaddr);
 internal void                 mac_dmn_event_unload_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, MAC_DMN_Module *module);
-internal void                 mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid);
-internal void                 mac_dmn_event_data_breakpoint(Arena *arena, DMN_EventList *events, pid_t tid);
+internal void                 mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, thread_t thread);
+internal void                 mac_dmn_event_data_breakpoint(Arena *arena, DMN_EventList *events, thread_t thread);
 internal void                 mac_dmn_event_halt(Arena *arena, DMN_EventList *events);
-internal void                 mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, pid_t tid);
-internal void                 mac_dmn_event_exception(Arena *arena, DMN_EventList *events, pid_t tid, U64 signo);
-internal MAC_DMN_Process *    mac_dmn_event_attach(Arena *arena, DMN_EventList *events, pid_t pid);
+internal void                 mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, thread_t thread);
+internal void                 mac_dmn_event_exception(Arena *arena, DMN_EventList *events, thread_t thread, U64 signo);
+internal MAC_DMN_Process *    mac_dmn_event_attach(Arena *arena, DMN_EventList *events, task_t task);
 
 #endif // MACOS_DEMON_H
