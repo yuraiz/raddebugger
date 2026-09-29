@@ -2769,6 +2769,18 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
           U64 off = off_attrib->val.u128.u64[0];
           U64 val = val_attrib->val.u128.u64[0];
           
+          // NOTE(yuraiz): DWARF2 encodes member offset as DW_FormKind_Block1 with DW_ExprOp_PlusUConst
+          if(off_attrib->val.kind == DW_FormKind_Block1)
+          {
+            U64 expr_info_size = off_attrib->val.u128.u64[0];
+            U64 expr_info_off = 1 + off_attrib->val.u128.u64[1]; // skip 1 byte
+            String8 expr = str8_substr(raw->sec[DW_SectionKind_Info].data, r1u64(expr_info_off, expr_info_off+expr_info_size));
+            if(expr.size >= 2 && expr.str[0] == DW_ExprOp_PlusUConst)
+            {
+              str8_deserial_read_uleb128(expr, 1, &off);
+            }
+          }
+          
           // rjf: unpack type
           RDIM_Type *type = 0;
           if(type_attrib != &dw2_attrib_nil)
@@ -3302,6 +3314,17 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
                 case DW_FormKind_SecOffset:  // NOTE(rjf): pre-dwarf5, location section offset -> a location list
                 {
                   locs = dw2_loclist_from_form_val(scratch2.arena, unit_parse_ctx, raw, attrib->val);
+                }break;
+                case DW_FormKind_Block1:
+                {
+                  U64 expr_info_size = attrib->val.u128.u64[0];
+                  U64 expr_info_off = 1 + attrib->val.u128.u64[1]; // skip 1 byte
+                  String8 expr = str8_substr(raw->sec[DW_SectionKind_Info].data, r1u64(expr_info_off, expr_info_off+expr_info_size));
+                  DW2_LocNode *n = push_array(scratch2.arena, DW2_LocNode, 1);
+                  n->v.expr = expr;
+                  n->v.range = r1u64(0, max_U64);
+                  SLLQueuePush(locs.first, locs.last, n);
+                  locs.count += 1;
                 }break;
               }
               
