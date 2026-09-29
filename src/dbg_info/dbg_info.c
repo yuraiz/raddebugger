@@ -1137,7 +1137,7 @@ di_conversion_completion_signal_receiver_thread_entry_point(void *p)
       // rjf: get the next retired code
       U64 retired_code = 0;
       // TODO(yuraiz): Fix that
-      if(di_shared->conversion_completion_shared_memory_base[0] != 0)
+      if(di_shared->conversion_completion_shared_memory_base != 0 && di_shared->conversion_completion_shared_memory_base[0] != 0)
       {
         semaphore_take(di_shared->conversion_completion_lock_semaphore, max_U64);
         retired_code = di_shared->conversion_completion_shared_memory_base[0];

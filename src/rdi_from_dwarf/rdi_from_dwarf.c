@@ -454,18 +454,6 @@ d2r_convert(Arena *arena, D2R_ConvertParams *params)
                                          f->file_name);
           full_file_path = path_normalized_from_string(scratch2.arena, full_file_path);
           
-          // TODO(yuraiz): Commented that during the rebase, make sure the new code is valid
-          // // NOTE(yuraiz): I think ideally I'd want all the pats to be relative to the compilation unit
-          // // to make the debug info movable, but it must be handled correctly during the resolution.
-
-          // //- yuraiz: convert to absolute path
-          // String8 full_file_path = path_absolute_dst_from_relative_dst_src(scratch.arena, f->file_name, dir->file_name);
-          // //- yuraiz: resolve the relative path
-          // if (!str8_match_lit("/", full_file_path, StringMatchFlag_RightSideSloppy)) {
-          //     DW2_LineTableFile *comp_unit_dir = &hdr->dirs.v[0];
-          //     full_file_path = path_absolute_dst_from_relative_dst_src(scratch.arena, full_file_path, comp_unit_dir->file_name);
-          // }
-
           U64 hash = u64_hash_from_str8(full_file_path);
           U64 slot_idx = hash%slots_count;
           SrcFileNode *node = 0;
