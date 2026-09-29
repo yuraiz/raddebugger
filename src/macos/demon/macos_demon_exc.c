@@ -141,19 +141,20 @@ mac_dmn_wait_for_exception(mach_port_t exc_port)
       mac_dmn_exception_state->last_exception->reply = reply;
     }
 
-    while(1)
-    {
-      if (mach_msg_recv(&request, exc_port, MACH_RCV_INTERRUPT | MACH_RCV_TIMEOUT, 0) == MACH_MSG_SUCCESS)
-      {
-        Assert(0 && "bulk messages aren't handled yet");
-        mach_exc_server(&request.hdr, &reply.hdr);
-        mac_dmn_exception_state->last_exception->reply = reply;
-      }
-      else
-      {
-        break;
-      }
-    }
+    // TODO(yuraiz): Handle bulk messages
+    // while(1)
+    // {
+    //   if (mach_msg_recv(&request, exc_port, MACH_RCV_INTERRUPT | MACH_RCV_TIMEOUT, 0) == MACH_MSG_SUCCESS)
+    //   {
+    //     Assert(0 && "bulk messages aren't handled yet");
+    //     mach_exc_server(&request.hdr, &reply.hdr);
+    //     mac_dmn_exception_state->last_exception->reply = reply;
+    //   }
+    //   else
+    //   {
+    //     break;
+    //   }
+    // }
   }
 
   if(status_code == MACH_RCV_TIMED_OUT)

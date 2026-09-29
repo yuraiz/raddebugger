@@ -32,20 +32,10 @@ mac_dmn_write_to_protected(
 ) {
   // NOTE(yuraiz): on macOS memory writable XOR executable.
   // so we need to change the protection before writing to it and revert back after.
+  // In addition, on arm64 the cache must be flushed explicitly.
 
-  {
-    // TODO(yuraiz): Figure out if it's required to round to the page size
-    U64 page_size = get_system_info()->page_size;
-    U64 min = AlignDownPow2(address, page_size);
-    U64 max = AlignPow2(address + size, page_size);
-    vm_machine_attribute_val_t value = MATTR_VAL_CACHE_FLUSH;
-    kern_return_t kr = mach_vm_machine_attribute(task, min, max - min, MATTR_CACHE, &value);
-    // TODO(yuraiz): The debugger tries to write to 0 on step out, figure out why
-    if(kr != 0 && address != 0)
-    {
-      printf("call to mach_vm_machine_attribute failed %p..%p: %s\n", address, size, mach_error_string(kr));
-    }
-  }
+  vm_machine_attribute_val_t value = MATTR_VAL_CACHE_FLUSH;
+  mach_vm_machine_attribute(task, address, size, MATTR_CACHE, &value);
 
   mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
   vm_region_submap_short_info_data_64_t region_info = {0};
