@@ -236,6 +236,14 @@ arm64_dasm_inst_from_code(Arena *arena, U64 vaddr, String8 code, DASM_Syntax syn
           flags |= DASM_InstFlag_Branch;
         }break;
 
+        // test bit and branch
+        case ARM64_TBZ:
+        case ARM64_TBNZ:
+        {
+          jump_dest_vaddr = label_addr;
+          flags |= DASM_InstFlag_Branch;
+        }break;
+
         // return
         case ARM64_RET:
         case ARM64_RETAA:
