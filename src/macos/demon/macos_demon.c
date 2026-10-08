@@ -2162,7 +2162,12 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         if(result->exception == EXC_BAD_ACCESS)
         {
           // TODO(yuraiz): distinguish between different codes
-          if(result->code == 257)
+          if(result->code == 2)
+          {
+            // NOTE(yuraiz): Try ignoring KERN_PROTECTION_FAILURE for now.
+            continue;
+          }
+          else if(result->code == 257)
           {
             MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result->thread);
 
