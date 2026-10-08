@@ -145,39 +145,18 @@ get_process_info(void)
 internal String8
 get_current_path(Arena *arena)
 {
-  char *cwdir = getcwd(0, 0);
-  String8 string = push_str8_copy(arena, str8_cstring(cwdir));
-  free(cwdir);
-  return string;
+  char buf[MAC_PATH_MAX] = {0};
+  getcwd(buf, MAC_PATH_MAX);
+  return push_str8_copy(arena, str8_cstring(buf));
 }
 
 internal U32
 get_process_start_time_unix(void)
 {
-  Temp scratch = scratch_begin(0,0);
-  U64 start_time = 0;
   pid_t pid = getpid();
-  String8 path = push_str8f(scratch.arena, "/proc/%u", pid);
-  struct stat st;
-  int err = stat((char*)path.str, &st);
-  if(err == 0)
-  {
-    start_time = st.st_mtime;
-  }
-  scratch_end(scratch);
-  return (U32)start_time;
-}
-
-internal String8
-get_env( String8 key )
-{
-  String8 result = {0};
-  const char *val = getenv((char *)key.str);
-  if (val)
-  {
-    result = str8_cstring(val);
-  }
-  return result;
+  struct proc_bsdinfo info = {0};
+  proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
+  return (U32)info.pbi_start_tvsec;
 }
 
 ////////////////////////////////
@@ -221,8 +200,14 @@ release_memory(void *ptr, U64 size)
 internal void *
 reserve_memory_large(U64 size)
 {
-  NotImplemented;
-  return 0;
+  // TODO(yuraiz): Consider using mach_vm api instead for all of the memory allocation?
+  // It provides more flexibility and what is used by libmalloc on macOS
+  void *result = mmap(0, size, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  if(result == MAP_FAILED)
+  {
+    result = 0;
+  }
+  return result;
 }
 
 internal B32
@@ -238,8 +223,9 @@ commit_memory_large(void *ptr, U64 size)
 internal U32
 tid(void)
 {
-  mach_port_t tid = mach_thread_self();
-  return (U32)tid;
+  uint64_t thread_id = 0;
+  pthread_threadid_np(0, &thread_id);
+  return (U32)thread_id;
 }
 
 internal void
@@ -516,7 +502,7 @@ internal void
 file_map_close(FileMap map)
 {
   // NOTE(rjf): nothing to do; `map` handles are the same as `file` handles in
-  // the linux implementation (on Windows they require separate handles)
+  // the macOS implementation (on Windows they require separate handles)
 }
 
 internal void *
@@ -1294,36 +1280,26 @@ semaphore_take(Semaphore semaphore, U64 endt_us)
 internal void
 semaphore_drop_count(Semaphore semaphore, U64 drop_count)
 {
-  if(drop_count != 1)
-  {
-    // TODO(yuraiz): Implement drop count
-    printf("%s: drop count > 1", __func__);
-  }
-
   MAC_Entity *entity = (MAC_Entity*)PtrFromInt(semaphore.u64[0]);
   if(entity != 0 && entity->kind == MAC_EntityKind_NamedSemaphore)
   {
-    for(;;)
+    while(drop_count > 0)
     {
       int err = sem_post(entity->named_semaphore);
-      if(err == 0)
+      if(errno != EAGAIN)
       {
-        break;
+        drop_count -= 1;
       }
-      else
-      {
-        if(errno == EAGAIN)
-        {
-          continue;
-        }
-      }
-      break;
     }
   }
 
   else if(entity != 0 && entity->kind == MAC_EntityKind_Semaphore)
   {
-    dispatch_semaphore_signal(entity->semaphore);
+    while(drop_count > 0)
+    {
+      dispatch_semaphore_signal(entity->semaphore);
+      drop_count -= 1;
+    }
   }
 }
 
@@ -1368,9 +1344,7 @@ barrier_release(Barrier barrier)
 internal void
 barrier_wait(Barrier barrier)
 {
-  // TODO(yuraiz): Why can it be zero?
-  // NOTE(brt): It's because async_tick splits the lane context when doing thin tasks and doesn't create a barrier
-  if (barrier.u64[0] == 0) return;
+  if(MemoryIsZeroStruct(&barrier)) { return; }
 
   MAC_Entity *entity = (MAC_Entity*)PtrFromInt(barrier.u64[0]);
   pthread_mutex_lock(&entity->barrier.mutex_handle);
@@ -1482,22 +1456,6 @@ make_guid(void)
   return guid;
 }
 
-internal U64
-sysctl_u64( char *name )
-{
-  U64 result = 0;
-
-  U8 buff[8];
-  size_t buff_len = sizeof(buff);
-
-  if (sysctlbyname(name, buff, &buff_len, 0, 0) != -1)
-  {
-    MemoryCopy(&result, buff, buff_len);
-  }
-
-  return result;
-}
-
 ////////////////////////////////
 //~ rjf: @hooks Entry Points (Implemented Per-OS)
 
@@ -1513,8 +1471,15 @@ mac_signal_handler(int sig, siginfo_t *info, void *arg)
     }
   }
   
-  local_persist void *ips[4096];
-  int ips_count = backtrace(ips, ArrayCount(ips));
+  local_persist void *ips_buf[4096];
+  void **ips = ips_buf;
+  int ips_count = backtrace(ips_buf, ArrayCount(ips_buf));
+  // skip the signal handler in the callstack
+  if(ips_count > 2)
+  {
+    ips_count -= 2;
+    ips = &ips[2];
+  }
   
   fprintf(stderr, "A fatal signal was received: %s (%d). The process is terminating.\n", strsignal(sig), sig);
   fprintf(stderr, "Create a new issue with this report at %s.\n\n", BUILD_ISSUES_LINK_STRING_LITERAL);
@@ -1523,9 +1488,27 @@ mac_signal_handler(int sig, siginfo_t *info, void *arg)
   {
     Dl_info info = {0};
     dladdr(ips[i], &info);
+
+    // NOTE(yuraiz): It's possible to get the image slide directly from the module addr
+    // by using the private api or by parsing the module manually
+    U64 image_slide = 0;
+    {
+      U32 count = _dyld_image_count();
+      for EachIndex(idx, count)
+      {
+          char *name = _dyld_get_image_name(idx);
+          if (strstr(name, info.dli_fname))
+          {
+              image_slide = _dyld_get_image_vmaddr_slide(idx);
+              break;
+          }
+      }
+    }
+    
+    uintptr_t relative_addr = (uintptr_t)ips[i] - image_slide;
     
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "llvm-symbolizer --default-arch arm64 --relative-address -f -e %s %lu", info.dli_fname, (unsigned long)ips[i] - (unsigned long)info.dli_fbase);
+    snprintf(cmd, sizeof(cmd), "llvm-symbolizer --default-arch arm64e --relative-address -f -e %s %lu", info.dli_fname, relative_addr);
     FILE *f = popen(cmd, "r");
     if(f)
     {
@@ -1558,28 +1541,32 @@ mac_signal_handler(int sig, siginfo_t *info, void *arg)
 }
 
 int
-main(int argc, char **argv)
+main(int argc, char **argv, char **envp)
 {
-  // //- brt: install signal handler for the crash call stacks
-  // {
-  //   struct sigaction handler = { .sa_sigaction = mac_signal_handler, .sa_flags = SA_SIGINFO, };
-  //   sigfillset(&handler.sa_mask);
-  //   sigaction(SIGILL, &handler, 0);
-  //   sigaction(SIGTRAP, &handler, 0);
-  //   sigaction(SIGABRT, &handler, 0);
-  //   sigaction(SIGFPE, &handler, 0);
-  //   sigaction(SIGBUS, &handler, 0);
-  //   sigaction(SIGSEGV, &handler, 0);
-  //   sigaction(SIGQUIT, &handler, 0);
-  // }
+  //- brt: install signal handler for the crash call stacks
+  {
+    struct sigaction handler = { .sa_sigaction = mac_signal_handler, .sa_flags = SA_SIGINFO, };
+    sigfillset(&handler.sa_mask);
+    sigaction(SIGILL, &handler, 0);
+    sigaction(SIGTRAP, &handler, 0);
+    sigaction(SIGABRT, &handler, 0);
+    sigaction(SIGFPE, &handler, 0);
+    sigaction(SIGBUS, &handler, 0);
+    sigaction(SIGSEGV, &handler, 0);
+    sigaction(SIGQUIT, &handler, 0);
+  }
 
   //- rjf: set up OS layer
   {
     //- rjf: get statically-allocated system/process info
     {
+      U32 cpu_count = 0;
+      size_t val_size = sizeof(cpu_count);
+      sysctlbyname("hw.physicalcpu", &cpu_count, &val_size, 0, 0);
+
       SystemInfo *info = &mac_state.system_info;
-      info->logical_processor_count = (U32)sysctl_u64("hw.physicalcpu");
-      info->page_size               = (U64)sysctl_u64("hw.pagesize");
+      info->logical_processor_count = cpu_count;
+      info->page_size               = (U64)getpagesize();
       info->large_page_size         = MB(2);
       info->allocation_granularity  = info->page_size;
     }
@@ -1600,12 +1587,11 @@ main(int argc, char **argv)
     //- brt: cache default environment
     {
       U64 env_count = 0;
-      char **__environ = *_NSGetEnviron();
-      for(; __environ[env_count] != 0; env_count += 1) {}
+      for(; envp[env_count] != 0; env_count += 1) {}
       char **default_env = push_array(mac_state.arena, char *, env_count+1);
       for EachIndex(idx, env_count)
       {
-        default_env[idx] = (char *)str8_copy(mac_state.arena, str8_cstring(__environ[idx])).str;
+        default_env[idx] = (char *)str8_copy(mac_state.arena, str8_cstring(envp[idx])).str;
       }
       default_env[env_count] = 0;
       mac_state.default_env_count = env_count;
