@@ -1475,6 +1475,26 @@ mac_wm_push_nsevent(NSEvent *ns_event)
   MAC_WM_Window *window = mac_wm_window_from_nswindow(ns_event.window);
   B32 press = 0;
 
+  {
+    NSEventModifierFlags flags = ns_event.modifierFlags;
+    WM_Modifiers modifiers = 0;
+    // TODO(yuraiz): handle command key separately
+    if(flags & (NSEventModifierFlagControl | NSEventModifierFlagCommand))
+    {
+      modifiers |= WM_Modifier_Ctrl;
+    }
+    if(flags & NSEventModifierFlagShift)
+    {
+      modifiers |= WM_Modifier_Shift;
+    }
+    if(flags & NSEventModifierFlagOption)
+    {
+      modifiers |= WM_Modifier_Alt;
+    }
+
+    mac_wm_state->modifiers = modifiers;
+  }
+
   switch (ns_event.type)
   {
     case NSEventTypeLeftMouseDown:
@@ -1620,27 +1640,20 @@ mac_wm_push_nsevent(NSEvent *ns_event)
     case NSEventTypeFlagsChanged:
     {
       WM_Key key = mac_wm_os_key_from_vkey(ns_event.keyCode);
-      NSEventModifierFlags flags = ns_event.modifierFlags;
-      WM_Modifiers modifiers = 0;
 
       // TODO(yuraiz): handle command key separately
-      if(flags & (NSEventModifierFlagControl | NSEventModifierFlagCommand))
+      if(mac_wm_state->modifiers & WM_Modifier_Ctrl)
       {
-        modifiers |= WM_Modifier_Ctrl;
         press |= key == WM_Key_Ctrl;
       }
-      if(flags & NSEventModifierFlagShift)
+      if(mac_wm_state->modifiers & WM_Modifier_Shift)
       {
-        modifiers |= WM_Modifier_Shift;
         press |= key == WM_Key_Shift;
       }
-      if(flags & NSEventModifierFlagOption)
+      if(mac_wm_state->modifiers & WM_Modifier_Alt)
       {
-        modifiers |= WM_Modifier_Alt;
         press |= key == WM_Key_Alt;
       }
-
-      mac_wm_state->modifiers = modifiers;
 
       WM_Event *event = mac_wm_push_event(press ? WM_EventKind_Press : WM_EventKind_Release, window);
       event->key = key;
