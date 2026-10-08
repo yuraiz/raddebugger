@@ -441,10 +441,8 @@ internal void                 mac_dmn_event_exit_thread(Arena *arena, DMN_EventL
 internal MAC_DMN_Process *    mac_dmn_event_create_process(Arena *arena, DMN_EventList *events, task_t task, MAC_DMN_Process *parent_process, MAC_DMN_CreateProcessFlags flags);
 internal void                 mac_dmn_event_load_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, U64 name_space_id, U64 new_link_map_vaddr);
 internal void                 mac_dmn_event_unload_module(Arena *arena, DMN_EventList *events, MAC_DMN_Process *process, MAC_DMN_Module *module);
-internal void                 mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, thread_t thread);
 internal void                 mac_dmn_event_data_breakpoint(Arena *arena, DMN_EventList *events, thread_t thread);
 internal void                 mac_dmn_event_halt(Arena *arena, DMN_EventList *events);
-internal void                 mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, thread_t thread);
 internal void                 mac_dmn_event_exception(Arena *arena, DMN_EventList *events, thread_t thread, U64 signo);
 internal MAC_DMN_Process *    mac_dmn_event_attach(Arena *arena, DMN_EventList *events, task_t task);
 

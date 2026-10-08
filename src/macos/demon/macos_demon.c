@@ -1205,17 +1205,6 @@ mac_dmn_push_event_breakpoint(Arena *arena, DMN_EventList *events, MAC_DMN_Threa
 }
 
 internal void
-mac_dmn_push_event_single_step(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread)
-{
-  DMN_Event *e = dmn_event_list_push(arena, events);
-  e->kind                = DMN_EventKind_SingleStep;
-  e->process             = mac_dmn_handle_from_process(thread->process);
-  e->thread              = mac_dmn_handle_from_thread(thread);
-  e->instruction_pointer = mac_dmn_thread_read_ip(thread);
-  e->address             = e->instruction_pointer;
-}
-
-internal void
 mac_dmn_push_event_exception(Arena *arena, DMN_EventList *events, MAC_DMN_Thread *thread, U64 signo)
 {
   local_persist B8 is_repeatable[] =
@@ -1523,24 +1512,6 @@ mac_dmn_event_probe_breakpoint(Arena* arena, DMN_EventList *events, MAC_DMN_Thre
 }
 
 internal void
-mac_dmn_event_breakpoint(Arena *arena, DMN_EventList *events, thread_t tid)
-{
-  MAC_DMN_Thread  *thread  = mac_dmn_thread_from_port(tid);
-  U64              ip      = mac_dmn_thread_read_ip(thread);
-
-  DMN_Handle process = mac_dmn_handle_from_process(thread->process);
-
-  // rjf: generate event
-  DMN_Event *e = dmn_event_list_push(arena, events);
-  e->kind                = DMN_EventKind_Breakpoint;
-  // e->kind                = hit_user_trap ? DMN_EventKind_Breakpoint : DMN_EventKind_Trap;
-  e->process             = process;
-  e->thread              = mac_dmn_handle_from_thread(thread);
-  e->instruction_pointer = ip;
-  // e->user_data           = hit_user_trap ? hit_user_trap->id : 0;
-}
-
-internal void
 mac_dmn_event_data_breakpoint(Arena *arena, DMN_EventList *events, thread_t tid)
 {
   MAC_DMN_Thread *thread = mac_dmn_thread_from_port(tid);
@@ -1568,18 +1539,6 @@ internal void
 mac_dmn_event_halt(Arena *arena, DMN_EventList *events)
 {
   mac_dmn_push_event_halt(arena, events);
-}
-
-internal void
-mac_dmn_event_single_step(Arena *arena, DMN_EventList *events, thread_t tid)
-{
-  MAC_DMN_Thread *thread = mac_dmn_thread_from_port(tid);
-  
-  // clear single step flag
-  mac_dmn_set_single_step_flag(thread, 0);
-  
-  // push event
-  mac_dmn_push_event_single_step(arena, events, thread);
 }
 
 internal void
@@ -2134,13 +2093,40 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
         if(!mac_dmn_event_probe_breakpoint(arena, &events, thread, result.subcode))
         {
           // TODO(yuraiz): handle different types of breakpoints
+          DMN_Event *e = dmn_event_list_push(arena, &events);
+          e->process             = mac_dmn_handle_from_process(thread->process);
+          e->thread              = mac_dmn_handle_from_thread(thread);
+          e->instruction_pointer = mac_dmn_thread_read_ip(thread);
+
+          // single step
           if(result.subcode == 0)
-          {
-            mac_dmn_event_single_step(arena, &events, result.thread);
+          {            
+            e->kind                = DMN_EventKind_SingleStep;
+            e->address             = e->instruction_pointer;
+            
+            // NOTE(yuraiz): The flag is cleared by the kernel, clear here to sync with the kernel
+            mac_dmn_set_single_step_flag(thread, 0);
           }
           else
           {
-            mac_dmn_event_breakpoint(arena, &events, result.thread);
+            DMN_Trap *hit_user_trap = 0;
+            {
+              U64 trap_idx = 0;
+              for EachNode(n, DMN_TrapChunkNode, ctrls->traps.first)
+              {
+                for EachIndex(n_idx, n->count)
+                {
+                  DMN_Trap *trap = n->v+n_idx;
+                  if(trap->vaddr == result.subcode)
+                  {
+                    hit_user_trap = trap;
+                  }
+                }
+              }
+            }
+
+            e->kind                = hit_user_trap ? DMN_EventKind_Breakpoint : DMN_EventKind_Trap;
+            e->user_data           = hit_user_trap ? hit_user_trap->id : 0;
           }
         }
         break;
