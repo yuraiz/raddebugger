@@ -1567,6 +1567,70 @@ mac_dmn_event_attach(Arena *arena, DMN_EventList *events, task_t task)
   return process;
 }
 
+internal B32
+mac_dmn_event_refresh_threads(Arena *arena, DMN_EventList *events)
+{
+  B32 threads_changed = 0;
+  for(MAC_DMN_Process *process = mac_dmn_state->first_process, *next_process = 0; process != 0; process = next_process)
+  {
+    next_process = process->next;
+
+    if(process->state == MAC_DMN_ProcessState_Normal)
+    {
+      //////////////////////////
+      //-yuraiz monitor threads
+      //
+      thread_act_array_t threads = NULL;
+      mach_msg_type_number_t threads_len = 0;
+      task_threads(process->task, &threads, &threads_len);
+
+      // generate exit thread events
+      for(MAC_DMN_Thread *thread = process->first_thread, *next = 0; thread != 0; thread = next)
+      {
+        next = thread->next;
+        B32 exists = 0;
+        for EachIndex(i, threads_len)
+        {
+          if(thread->tid == threads[i])
+          {
+            exists = 1;
+          }
+        }
+        if(!exists)
+        {
+          mac_dmn_event_exit_thread(arena, events, thread->tid, 0);
+          threads_changed = 1;
+        }
+      }
+
+      // generate new thread events
+      for EachIndex(i, threads_len)
+      {
+        B32 exists = 0;
+        
+        for(MAC_DMN_Thread *thread = process->first_thread, *next = 0; thread != 0; thread = next)
+        {
+          next = thread->next;
+          if(thread->tid == threads[i])
+          {
+            exists = 1;
+          }
+        }
+
+        if(!exists)
+        {
+          mac_dmn_event_create_thread(arena, events, process, threads[i]);
+          threads_changed = 1;
+        }
+      }
+
+      vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
+    }
+  }
+
+  return threads_changed;
+}
+
 ////////////////////////////////
 //~ rjf: @dmn_os_hooks Main Layer Initialization (Implemented Per-OS)
 
@@ -1833,6 +1897,14 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
             }
           }
         }
+        if(!dmn_handle_match(dmn_handle_zero(), ctrls->single_step_thread))
+        {
+          MAC_DMN_Thread *thread = mac_dmn_thread_from_handle(ctrls->single_step_thread);
+          if(process != thread->process)
+          {
+            process_is_frozen = 1;
+          }
+        }
 
         B32 should_resume = 0;
         if(!process_is_frozen)
@@ -1933,233 +2005,201 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
     MAC_DMN_ThreadPtrList stopped_threads = {0};
     do
     {
-      MAC_DMN_ExceptionResult result;
+      B32 got_events = 0;
+      MAC_DMN_ExceptionResult *result_list;
       {
         mutex_drop(mac_dmn_state->halter_mutex);
-        result = mac_dmn_wait_for_exception(mac_dmn_state->exc_port);
+        result_list = mac_dmn_wait_for_exception(mac_dmn_state->exc_port);
         mutex_take(mac_dmn_state->halter_mutex);
       }
 
-      for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
+      if(mac_dmn_event_refresh_threads(arena, &events))
       {
-        if(process->state == MAC_DMN_ProcessState_Normal)
-        {
-          //////////////////////////
-          //-yuraiz monitor threads
-          //
-          thread_act_array_t threads = NULL;
-          mach_msg_type_number_t threads_len = 0;
-          task_threads(process->task, &threads, &threads_len);
-
-          // generate exit thread events
-          for EachNode(thread, MAC_DMN_Thread, process->first_thread)
-          {
-            B32 exists = 0;
-            for EachIndex(i, threads_len)
-            {
-              if(thread->tid == threads[i])
-              {
-                exists = 1;
-              }
-            }
-            if(!exists)
-            {
-              mac_dmn_event_exit_thread(arena, &events, thread->tid, 0);
-            }
-          }
-
-          // generate new thread events
-          for EachIndex(i, threads_len)
-          {
-            B32 exists = 0;
-            for EachNode(thread, MAC_DMN_Thread, process->first_thread)
-            {
-              if(thread->tid == threads[i])
-              {
-                exists = 1;
-              }
-            }
-
-            if(!exists)
-            {
-              mac_dmn_event_create_thread(arena, &events, process, threads[i]);
-            }
-          }
-
-          vm_deallocate(mach_task_self(), (vm_address_t)threads, threads_len * sizeof(threads[0]));
-        }
-      }
-      
-      if(result.timed_out)
-      {
-        // NOTE(yuraiz): As I understand task_suspend is reliable enough
-        if(mac_dmn_state->is_halting)
-        {
-          is_halt_done = 1;
-          break;
-        }
-
-        continue;
+        got_events = 1;
       }
 
-      // intercept initing processes
+      for EachNode(result, MAC_DMN_ExceptionResult, result_list)
       {
-        MAC_DMN_Process *process = mac_dmn_process_from_port(result.task);
-        
-        if(process && process->state != MAC_DMN_ProcessState_Normal)
+        pid_t pid = 0;
+        pid_for_task(result->task, &pid);
+
+        // intercept initing processes
         {
-          switch(process->state)
+          MAC_DMN_Process *process = mac_dmn_process_from_port(result->task);
+          
+          if(process && process->state != MAC_DMN_ProcessState_Normal)
           {
-            default: continue;
-            case MAC_DMN_ProcessState_Null:
-            case MAC_DMN_ProcessState_Normal:
+            switch(process->state)
             {
-              InvalidPath;
-            } break;
-            case MAC_DMN_ProcessState_Attach:
-            {
-              if(result.exception == EXC_SOFTWARE &&
-                 result.code == EXC_SOFT_SIGNAL &&
-                 (result.subcode == SIGSTOP))
+              default: continue;
+              case MAC_DMN_ProcessState_Null:
+              case MAC_DMN_ProcessState_Normal:
               {
-                if(task_resume(result.task) == 0)
+                InvalidPath;
+              } break;
+              case MAC_DMN_ProcessState_Attach:
+              {
+                if(result->exception == EXC_SOFTWARE &&
+                  result->code == EXC_SOFT_SIGNAL &&
+                  (result->subcode == SIGSTOP))
                 {
+                  if(task_resume(result->task) == 0)
+                  {
+                    process->state = MAC_DMN_ProcessState_Normal;
+                    goto wait_for_signal;
+                  }
+                  else { Assert(0 && "failed to resume tracee"); }
+                }
+                else { Assert(0 && "unexpected signal"); }
+              } break;
+              case MAC_DMN_ProcessState_Launch:
+              {
+                if(result->exception == EXC_SOFTWARE &&
+                  result->code == EXC_SOFT_SIGNAL &&
+                  result->subcode == SIGSTOP)
+                {
+                  printf("Handled the exception, process launched\n");
+
+                  MAC_DMN_CreateProcessFlags create_flags = process->debug_subprocesses ? MAC_DMN_CreateProcessFlag_DebugSubprocesses : 0;
+                  mac_dmn_process_release(process);
+                  process = mac_dmn_event_create_process(arena, &events, result->task, 0, create_flags);
+
+                  // compute the initial dyld notifier address
+                  mac_dmn_process_update_dyld_notifier_addr(process);
+
                   process->state = MAC_DMN_ProcessState_Normal;
+
+                  thread_act_array_t threads = NULL;
+                  mach_msg_type_number_t threads_len = 0;
+                  task_threads(process->task, &threads, &threads_len);
+                  for EachIndex(i, threads_len)
+                  {
+                    mac_dmn_event_create_thread(arena, &events, process, threads[i]);
+                  }
                   goto wait_for_signal;
                 }
-                else { Assert(0 && "failed to resume tracee"); }
-              }
-              else { Assert(0 && "unexpected signal"); }
-            } break;
-            case MAC_DMN_ProcessState_Launch:
-            {
-              if(result.exception == EXC_SOFTWARE &&
-                 result.code == EXC_SOFT_SIGNAL &&
-                 result.subcode == SIGSTOP)
-              {
-                printf("Handled the exception, process launched\n");
-
-                MAC_DMN_CreateProcessFlags create_flags = process->debug_subprocesses ? MAC_DMN_CreateProcessFlag_DebugSubprocesses : 0;
-                mac_dmn_process_release(process);
-                process = mac_dmn_event_create_process(arena, &events, result.task, 0, create_flags);
-
-                // compute the initial dyld notifier address
-                mac_dmn_process_update_dyld_notifier_addr(process);
-
-                process->state = MAC_DMN_ProcessState_Normal;
-
-                thread_act_array_t threads = NULL;
-                mach_msg_type_number_t threads_len = 0;
-                task_threads(process->task, &threads, &threads_len);
-                for EachIndex(i, threads_len)
-                {
-                  mac_dmn_event_create_thread(arena, &events, process, threads[i]);
-                }
-                goto wait_for_signal;
-              }
-              else { Assert(0 && "unexpected signal"); }
-            } break;
+                else { Assert(0 && "unexpected signal"); }
+              } break;
+            }
+            wait_for_signal:;
+            continue;
           }
-          wait_for_signal:;
-          continue;
         }
-      }
 
-  
-      MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
+    
+        MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result->thread);
 
-      // clear the exception if it's our probe and handle the probe
-      if(result.exception == EXC_BREAKPOINT)
-      {
-        if(mac_dmn_event_probe_breakpoint(arena, &events, thread, result.subcode))
+        // clear the exception if it's our probe and handle the probe
+        if(result->exception == EXC_BREAKPOINT)
         {
-          result.exception = 0;
-        }
-      }
-
-      // read thread registers
-      if(result.exception != 0)
-      {
-        MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
-        if(thread != 0)
-        {
-          thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
-        }
-      }
-
-      if(result.exception == EXC_BREAKPOINT)
-      {
-        MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
-        if(!mac_dmn_event_probe_breakpoint(arena, &events, thread, result.subcode))
-        {
-          // TODO(yuraiz): handle different types of breakpoints
-          DMN_Event *e = dmn_event_list_push(arena, &events);
-          e->process             = mac_dmn_handle_from_process(thread->process);
-          e->thread              = mac_dmn_handle_from_thread(thread);
-          e->instruction_pointer = mac_dmn_thread_read_ip(thread);
-
-          // single step
-          if(result.subcode == 0)
-          {            
-            e->kind                = DMN_EventKind_SingleStep;
-            e->address             = e->instruction_pointer;
-            
-            // NOTE(yuraiz): The flag is cleared by the kernel, clear here to sync with the kernel
-            mac_dmn_set_single_step_flag(thread, 0);
-          }
-          else
+          if(mac_dmn_event_probe_breakpoint(arena, &events, thread, result->subcode))
           {
-            DMN_Trap *hit_user_trap = 0;
+            result->exception = 0;
+            got_events = 1;
+          }
+        }
+        if(mac_dmn_state->is_halting)
+        {
+          if(result->exception == EXC_SOFTWARE && result->code == EXC_SOFT_SIGNAL && result->subcode == SIGSTOP)
+          {
+            mac_dmn_state->halt_proc_count -= 1;
+            result->exception = 0;
+          }
+        }
+
+        // read thread registers
+        if(result->exception != 0)
+        {
+          if(thread != 0)
+          {
+            thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
+          }
+        }
+
+        if(result->exception == EXC_BREAKPOINT)
+        {
+          if(!mac_dmn_event_probe_breakpoint(arena, &events, thread, result->subcode))
+          {
+            // TODO(yuraiz): handle different types of breakpoints
+            DMN_Event *e = dmn_event_list_push(arena, &events);
+            e->process             = mac_dmn_handle_from_process(thread->process);
+            e->thread              = mac_dmn_handle_from_thread(thread);
+            e->instruction_pointer = mac_dmn_thread_read_ip(thread);
+
+            // single step
+            if(result->subcode == 0)
+            {            
+              e->kind    = DMN_EventKind_SingleStep;
+              e->address = e->instruction_pointer;
+              
+              // NOTE(yuraiz): The flag is cleared by the kernel, probably not needed here
+              mac_dmn_set_single_step_flag(thread, 0);
+            }
+            else
             {
-              U64 trap_idx = 0;
-              for EachNode(n, DMN_TrapChunkNode, ctrls->traps.first)
+              DMN_Trap *hit_user_trap = 0;
               {
-                for EachIndex(n_idx, n->count)
+                U64 trap_idx = 0;
+                for EachNode(n, DMN_TrapChunkNode, ctrls->traps.first)
                 {
-                  DMN_Trap *trap = n->v+n_idx;
-                  if(trap->vaddr == result.subcode)
+                  for EachIndex(n_idx, n->count)
                   {
-                    hit_user_trap = trap;
+                    DMN_Trap *trap = n->v+n_idx;
+                    if(trap->vaddr == result->subcode)
+                    {
+                      hit_user_trap = trap;
+                    }
                   }
                 }
               }
+
+              e->kind = hit_user_trap ? DMN_EventKind_Breakpoint : DMN_EventKind_Trap;
             }
-
-            e->kind                = hit_user_trap ? DMN_EventKind_Breakpoint : DMN_EventKind_Trap;
-            e->user_data           = hit_user_trap ? hit_user_trap->id : 0;
           }
+          got_events = 1;
         }
-        break;
-      }
-      
-      if(result.exception == EXC_BAD_ACCESS)
-      {
-        // TODO(yuraiz): distinguish between different codes
-        if(result.code == 257)
+        
+        if(result->exception == EXC_BAD_ACCESS)
         {
-          printf("bad access %d\n", result.subcode);
-          MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result.thread);
+          // TODO(yuraiz): distinguish between different codes
+          if(result->code == 257)
+          {
+            MAC_DMN_Thread *thread = mac_dmn_thread_from_port(result->thread);
 
-          DMN_Event *e = dmn_event_list_push(arena, &events);
-          e->kind                = DMN_EventKind_Exception;
-          e->process             = mac_dmn_handle_from_process(thread->process);
-          e->thread              = mac_dmn_handle_from_thread(thread);
-          e->instruction_pointer = mac_dmn_thread_read_ip(thread);
-          e->code                = SIGSEGV;
-          e->exception_repeated  = 0;
-          e->address             = result.subcode;
+            DMN_Event *e = dmn_event_list_push(arena, &events);
+            e->kind                = DMN_EventKind_Exception;
+            e->process             = mac_dmn_handle_from_process(thread->process);
+            e->thread              = mac_dmn_handle_from_thread(thread);
+            e->instruction_pointer = mac_dmn_thread_read_ip(thread);
+            e->code                = SIGSEGV;
+            e->exception_repeated  = 0;
+            e->address             = result->subcode;
+          }
+          else
+          {
+            mac_dmn_event_exception(arena, &events, result->thread, SIGSEGV);
+          }
+          got_events = 1;
         }
-        else
+        if(result->exception == EXC_SOFTWARE && result->code == EXC_SOFT_SIGNAL)
         {
-          mac_dmn_event_exception(arena, &events, result.thread, SIGSEGV);
+          mac_dmn_event_exception(arena, &events, result->thread, result->subcode);
+          got_events = 1;
         }
-        break;
       }
-      if(result.exception == EXC_SOFTWARE && result.code == EXC_SOFT_SIGNAL)
+
+      // NOTE(yuraiz): As I understand task_suspend is reliable enough
+      if(mac_dmn_state->is_halting)
       {
-        mac_dmn_event_exception(arena, &events, result.thread, result.subcode);
+        is_halt_done = mac_dmn_state->halt_proc_count == 0;
         break;
       }
+
+      if(got_events)
+      {
+        break;
+      }
+
     // TODO(yuraiz): Fix running threads info
     } while(running_threads.count > 0 || mac_dmn_state->process_pending_creation > 0 || mac_dmn_state->threads_pending_creation > 0);
     
@@ -2196,14 +2236,15 @@ dmn_ctrl_run(Arena *arena, DMN_CtrlCtx *ctx, DMN_RunCtrls *ctrls)
     }
   }
 
-  // update register cache
-  for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
-  {
-    for EachNode(thread, MAC_DMN_Thread, process->first_thread)
-    {
-      thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
-    }
-  }
+  // NOTE(yuraiz): Commented out because the register cache is updated only for some of the events
+  // // update register cache
+  // for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
+  // {
+  //   for EachNode(thread, MAC_DMN_Thread, process->first_thread)
+  //   {
+  //     thread->is_reg_block_dirty = !mac_dmn_thread_read_reg_block(thread);
+  //   }
+  // }
   
   if(events.count == 0 && mac_dmn_state->process_count == 0)
   {
@@ -2226,13 +2267,18 @@ dmn_halt(U64 code, U64 user_data)
   {
     if(mac_dmn_state->process_count)
     {
-      mac_dmn_state->halter_tid     = pthread_mach_thread_np(pthread_self());
-      mac_dmn_state->halt_code      = code;
-      mac_dmn_state->halt_user_data = user_data;
-      mac_dmn_state->is_halting     = 1;
+      mac_dmn_state->halter_tid      = pthread_mach_thread_np(pthread_self());
+      mac_dmn_state->halt_code       = code;
+      mac_dmn_state->halt_user_data  = user_data;
+      mac_dmn_state->is_halting      = 1;
+      mac_dmn_state->halt_proc_count = 0;
       for EachNode(process, MAC_DMN_Process, mac_dmn_state->first_process)
       {
-        task_suspend(process->task);
+        // TODO(yuraiz): check if actually running
+        pid_t pid = 0;
+        pid_for_task(process->task, &pid);
+        kill(pid, SIGSTOP);
+        mac_dmn_state->halt_proc_count += 1;
       }
     }
   }

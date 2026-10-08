@@ -94,18 +94,23 @@ mac_dmn_reply_to_pending_exceptions_for_task(task_t task)
 
   pid_t target_pid;
   pid_for_task(task, &target_pid);
+
+  U32 cnt = 0;
   
-  for EachNode(exception, MAC_DMN_ExceptionResult, mac_dmn_exception_state->first_exception)
+  for(MAC_DMN_ExceptionResult *exception = mac_dmn_exception_state->first_exception, *next = 0;
+      exception != 0;
+      exception = next)
   {
-    // total_exc++;
+    next = exception->next;
+
     if(exception->task == task)
     {
       //- yuraiz: handle UNIX soft signal
-      if (exception->exception == EXC_SOFTWARE && exception->code == EXC_SOFT_SIGNAL) {
+      if(exception->pt_thupdate != 0) {
         ptrace(PT_THUPDATE,
                 target_pid,
                 (caddr_t)(uintptr_t)exception->thread,
-                exception->subcode);
+                exception->pt_thupdate);
       }
 
       ptrace(PT_CONTINUE, target_pid, (caddr_t)1, 0);
@@ -123,10 +128,12 @@ mac_dmn_reply_to_pending_exceptions_for_task(task_t task)
   return should_resume;
 }
 
-internal MAC_DMN_ExceptionResult
+internal MAC_DMN_ExceptionResult*
 mac_dmn_wait_for_exception(mach_port_t exc_port)
 {
   kern_return_t status_code = 0;
+
+  MAC_DMN_ExceptionResult *first_exception = 0;
 
   {
     mach_msg_timeout_t timeout_ms = 17;
@@ -139,37 +146,34 @@ mac_dmn_wait_for_exception(mach_port_t exc_port)
     {
       mach_exc_server(&request.hdr, &reply.hdr);
       mac_dmn_exception_state->last_exception->reply = reply;
+      first_exception = mac_dmn_exception_state->last_exception;
     }
 
     // TODO(yuraiz): Handle bulk messages
-    // while(1)
-    // {
-    //   if (mach_msg_recv(&request, exc_port, MACH_RCV_INTERRUPT | MACH_RCV_TIMEOUT, 0) == MACH_MSG_SUCCESS)
-    //   {
-    //     Assert(0 && "bulk messages aren't handled yet");
-    //     mach_exc_server(&request.hdr, &reply.hdr);
-    //     mac_dmn_exception_state->last_exception->reply = reply;
-    //   }
-    //   else
-    //   {
-    //     break;
-    //   }
-    // }
+    while(1)
+    {
+      if (mach_msg_recv(&request, exc_port, MACH_RCV_INTERRUPT | MACH_RCV_TIMEOUT, 0) == MACH_MSG_SUCCESS)
+      {
+        mach_exc_server(&request.hdr, &reply.hdr);
+        mac_dmn_exception_state->last_exception->reply = reply;
+      }
+      else
+      {
+        break;
+      }
+    }
   }
 
   if(status_code == MACH_RCV_TIMED_OUT)
   {
-    MAC_DMN_ExceptionResult result = {0};
-    result.timed_out = true;
-    return result;
+    return 0;
   }
   if(status_code != 0)
   {
-    fprintf(stderr, "mach_msg_server_once returned error: %x %s\n", status_code, mach_error_string(status_code));
+    fprintf(stderr, "mach_msg_server returned error: %x %s\n", status_code, mach_error_string(status_code));
   }
 
-  MAC_DMN_ExceptionResult result = *mac_dmn_exception_state->last_exception;
-  return result;
+  return first_exception;
 }
 
 ////////////////////////////////
@@ -214,7 +218,16 @@ catch_mach_exception_raise(
   mach_msg_type_number_t code_count
 )
 {
-  if(mac_dmn_exception_state->first_exception == 0)
+  B32 task_has_pending_exceptions = 0;
+  for EachNode(exception, MAC_DMN_ExceptionResult, mac_dmn_exception_state->first_exception)
+  {
+    if(exception->task == task)
+    {
+      task_has_pending_exceptions = 1;
+    }
+  }
+  
+  if(!task_has_pending_exceptions)
   {
     task_suspend(task);
   }
@@ -238,6 +251,7 @@ catch_mach_exception_raise(
   {
     result = push_array(mac_dmn_exception_state->arena, MAC_DMN_ExceptionResult, 1);
   }
+  MemoryZeroStruct(result);
 
   DLLPushBack(mac_dmn_exception_state->first_exception, mac_dmn_exception_state->last_exception, result);
 
@@ -248,11 +262,17 @@ catch_mach_exception_raise(
   if(code_count > 0) { result->code = code[0]; }
   if(code_count > 1) { result->subcode = code[1]; }
 
-  if (exception == EXC_BREAKPOINT)
+  //- yuraiz: handle UNIX soft signal
+  if(exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL)
+  {
+    result->pt_thupdate = code[1];
+  }
+
+  if(exception == EXC_BREAKPOINT)
   {
     // skip printing
   }
-  else if (exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL)
+  else if(exception == EXC_SOFTWARE && code[0] == EXC_SOFT_SIGNAL)
   {
     printf("Got exception %s (code: EXC_SOFT_SIGNAL subcode: %s)\n",
       exc_type_to_string(result->exception), 

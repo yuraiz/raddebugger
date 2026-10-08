@@ -33,6 +33,7 @@ struct MAC_DMN_ExceptionResult
   S64 subcode;
   B32 timed_out;
   MAC_DMN_MachMessage reply;
+  S64 pt_thupdate;
   arm_debug_state64_t *dbg_state;
 };
 
@@ -60,7 +61,7 @@ global MAC_DMN_ExceptionState *mac_dmn_exception_state = 0;
 
 internal mach_port_t mac_dmn_make_exception_port();
 internal void mac_dmn_subscribe_to_exceptions(task_t task, mach_port_t exc_port);
-internal MAC_DMN_ExceptionResult mac_dmn_wait_for_exception(mach_port_t exc_port);
+internal MAC_DMN_ExceptionResult* mac_dmn_wait_for_exception(mach_port_t exc_port);
 
 ////////////////////////////////
 //~ Mach exception handlers

@@ -393,6 +393,7 @@ typedef struct MAC_DMN_State
   pid_t halter_tid;
   U64   halt_code;
   U64   halt_user_data;
+  U64   halt_proc_count;
   B32   is_halting;
 
   // TLS
