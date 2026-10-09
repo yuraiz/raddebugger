@@ -1483,6 +1483,22 @@ ev_string_iter_next(Arena *arena, EV_StringIter *it, String8 *out_string)
                 break;
               }
             }
+            // NOTE(yuraiz): Temporary bit flags support
+            String8List bit_flag_names = {0};
+            U64 flag_combination = 0;
+            for(U64 val_idx = 0; val_idx < type->count; val_idx += 1)
+            {
+              if((value_eval.value.u64 & type->enum_vals[val_idx].val) != 0)
+              {
+                str8_list_push(arena, &bit_flag_names, type->enum_vals[val_idx].name);
+                flag_combination |= type->enum_vals[val_idx].val;
+              }
+            }
+            if(value_eval.value.u64 == flag_combination)
+            {
+              constant_name = str8_list_join(arena, &bit_flag_names, &(StringJoin){.pre = str8_lit("{ "), .sep = str8_lit(", "), .post = str8_lit(" }")});
+            }
+
             String8 sufficient_suffix = constant_name;
             if(str8_match(sufficient_suffix, type->name, StringMatchFlag_RightSideSloppy))
             {
